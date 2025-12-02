@@ -146,3 +146,16 @@ class CommandTemplateRead(CommandTemplateBase):
     id: int
     project_id: int
     created_at: datetime
+
+
+# ============================================================================
+# FILE EXPLORER MODELS
+# ============================================================================
+
+class FileInfo(SQLModel):
+    """Schema for file/directory information."""
+    name: str
+    path: str  # Relative path from workspace root
+    is_directory: bool
+    size: Optional[int] = None  # File size in bytes
+    extension: Optional[str] = None  # File extension for icons

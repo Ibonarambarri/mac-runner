@@ -1,0 +1,286 @@
+import { useState, useEffect, useCallback } from 'react';
+import {
+  Folder,
+  File,
+  FileText,
+  FileCode,
+  Image,
+  ChevronRight,
+  Download,
+  Archive,
+  ArrowLeft,
+  Loader2,
+  Home,
+  X,
+} from 'lucide-react';
+import { listFiles, getFileContent, getFileDownloadUrl, getFolderZipUrl } from '../api';
+
+/**
+ * Get icon component based on file extension
+ */
+function getFileIcon(extension, isDirectory) {
+  if (isDirectory) return Folder;
+
+  const codeExtensions = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'go', 'rs', 'rb', 'php'];
+  const textExtensions = ['txt', 'md', 'json', 'yml', 'yaml', 'xml', 'html', 'css', 'scss'];
+  const imageExtensions = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'webp'];
+
+  if (codeExtensions.includes(extension)) return FileCode;
+  if (textExtensions.includes(extension)) return FileText;
+  if (imageExtensions.includes(extension)) return Image;
+
+  return File;
+}
+
+/**
+ * Format file size in human readable format
+ */
+function formatSize(bytes) {
+  if (bytes === null || bytes === undefined) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * FileExplorer Component
+ *
+ * Tree-style file browser with navigation, preview, and download.
+ */
+export function FileExplorer({ projectId }) {
+  const [currentPath, setCurrentPath] = useState('');
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [fileContent, setFileContent] = useState(null);
+  const [loadingContent, setLoadingContent] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+
+  // Fetch files for current path
+  const fetchFiles = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await listFiles(projectId, currentPath);
+      setFiles(data);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId, currentPath]);
+
+  useEffect(() => {
+    fetchFiles();
+  }, [fetchFiles]);
+
+  // Navigate to a directory
+  const navigateTo = (path) => {
+    setCurrentPath(path);
+    setSelectedFile(null);
+    setFileContent(null);
+    setShowPreview(false);
+  };
+
+  // Go back one level
+  const goBack = () => {
+    const parts = currentPath.split('/').filter(Boolean);
+    parts.pop();
+    navigateTo(parts.join('/'));
+  };
+
+  // Handle file click
+  const handleFileClick = async (file) => {
+    if (file.is_directory) {
+      navigateTo(file.path);
+    } else {
+      setSelectedFile(file);
+      setShowPreview(true);
+
+      // Try to load content for text files
+      const textExtensions = ['txt', 'md', 'json', 'yml', 'yaml', 'xml', 'html', 'css', 'scss', 'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'rb', 'php', 'sh', 'bash', 'zsh'];
+      if (textExtensions.includes(file.extension?.toLowerCase())) {
+        setLoadingContent(true);
+        try {
+          const content = await getFileContent(projectId, file.path);
+          setFileContent(content);
+        } catch (e) {
+          setFileContent(`Error loading file: ${e.message}`);
+        } finally {
+          setLoadingContent(false);
+        }
+      } else {
+        setFileContent(null);
+      }
+    }
+  };
+
+  // Build breadcrumb parts
+  const breadcrumbParts = currentPath ? currentPath.split('/').filter(Boolean) : [];
+
+  return (
+    <div className="bg-slate-900/50 border border-slate-800 rounded-lg overflow-hidden">
+      {/* Header with breadcrumb */}
+      <div className="border-b border-slate-800 p-3">
+        <div className="flex items-center gap-2 overflow-x-auto">
+          <button
+            onClick={() => navigateTo('')}
+            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors flex-shrink-0 touch-manipulation"
+            title="Root"
+          >
+            <Home className="w-4 h-4" />
+          </button>
+
+          {breadcrumbParts.length > 0 && (
+            <>
+              <ChevronRight className="w-4 h-4 text-slate-600 flex-shrink-0" />
+              {breadcrumbParts.map((part, index) => {
+                const path = breadcrumbParts.slice(0, index + 1).join('/');
+                const isLast = index === breadcrumbParts.length - 1;
+                return (
+                  <div key={path} className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => !isLast && navigateTo(path)}
+                      className={`text-sm ${
+                        isLast
+                          ? 'text-slate-200 cursor-default'
+                          : 'text-slate-400 hover:text-slate-200'
+                      } touch-manipulation`}
+                    >
+                      {part}
+                    </button>
+                    {!isLast && <ChevronRight className="w-4 h-4 text-slate-600" />}
+                  </div>
+                );
+              })}
+            </>
+          )}
+
+          {/* Download ZIP button */}
+          <a
+            href={getFolderZipUrl(projectId, currentPath)}
+            className="ml-auto p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors flex-shrink-0 touch-manipulation"
+            title="Download as ZIP"
+          >
+            <Archive className="w-4 h-4" />
+          </a>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="flex flex-col lg:flex-row">
+        {/* File list */}
+        <div className={`${showPreview ? 'lg:w-1/2' : 'w-full'} border-r border-slate-800`}>
+          {loading ? (
+            <div className="flex items-center justify-center p-8">
+              <Loader2 className="w-6 h-6 animate-spin text-terminal-green" />
+            </div>
+          ) : error ? (
+            <div className="p-4 text-red-400 text-sm">{error}</div>
+          ) : files.length === 0 ? (
+            <div className="p-4 text-slate-500 text-sm">Empty directory</div>
+          ) : (
+            <div className="max-h-80 overflow-y-auto">
+              {/* Back button if not at root */}
+              {currentPath && (
+                <button
+                  onClick={goBack}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800 transition-colors text-left touch-manipulation"
+                >
+                  <ArrowLeft className="w-4 h-4 text-slate-400" />
+                  <span className="text-sm text-slate-400">..</span>
+                </button>
+              )}
+
+              {files.map((file) => {
+                const FileIcon = getFileIcon(file.extension, file.is_directory);
+                const isSelected = selectedFile?.path === file.path;
+
+                return (
+                  <div
+                    key={file.path}
+                    className={`flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800 transition-colors group cursor-pointer ${
+                      isSelected ? 'bg-terminal-green/10' : ''
+                    }`}
+                    onClick={() => handleFileClick(file)}
+                  >
+                    <FileIcon className={`w-4 h-4 flex-shrink-0 ${
+                      file.is_directory ? 'text-yellow-400' : 'text-slate-400'
+                    }`} />
+                    <span className={`text-sm flex-1 truncate ${
+                      isSelected ? 'text-terminal-green' : 'text-slate-300'
+                    }`}>
+                      {file.name}
+                    </span>
+                    {!file.is_directory && (
+                      <>
+                        <span className="text-xs text-slate-500">
+                          {formatSize(file.size)}
+                        </span>
+                        <a
+                          href={getFileDownloadUrl(projectId, file.path)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="p-1 text-slate-500 hover:text-slate-200 opacity-0 group-hover:opacity-100 transition-opacity touch-manipulation"
+                          title="Download"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                        </a>
+                      </>
+                    )}
+                    {file.is_directory && (
+                      <ChevronRight className="w-4 h-4 text-slate-500" />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* File preview panel */}
+        {showPreview && selectedFile && (
+          <div className="lg:w-1/2 border-t lg:border-t-0 border-slate-800">
+            <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-900/30">
+              <span className="text-sm text-slate-300 truncate">{selectedFile.name}</span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={getFileDownloadUrl(projectId, selectedFile.path)}
+                  className="p-1 text-slate-400 hover:text-slate-200 transition-colors touch-manipulation"
+                  title="Download"
+                >
+                  <Download className="w-4 h-4" />
+                </a>
+                <button
+                  onClick={() => {
+                    setShowPreview(false);
+                    setSelectedFile(null);
+                    setFileContent(null);
+                  }}
+                  className="p-1 text-slate-400 hover:text-slate-200 transition-colors lg:hidden touch-manipulation"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="p-4 max-h-80 overflow-auto">
+              {loadingContent ? (
+                <div className="flex items-center justify-center">
+                  <Loader2 className="w-5 h-5 animate-spin text-terminal-green" />
+                </div>
+              ) : fileContent !== null ? (
+                <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap break-all">
+                  {fileContent}
+                </pre>
+              ) : (
+                <div className="text-sm text-slate-500">
+                  Binary file - click download to view
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

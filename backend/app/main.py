@@ -10,16 +10,18 @@ from typing import List
 
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, PlainTextResponse
 from sqlmodel import Session, select
 
 from .database import create_db_and_tables, get_session, engine
 from .models import (
     Project, ProjectCreate, ProjectRead, ProjectUpdate,
     Job, JobRead, JobStatus, ProjectStatus,
-    CommandTemplate, CommandTemplateCreate, CommandTemplateRead, CommandTemplateUpdate
+    CommandTemplate, CommandTemplateCreate, CommandTemplateRead, CommandTemplateUpdate,
+    FileInfo
 )
 from .manager import init_process_manager, get_process_manager
-from .websockets import stream_logs
+from .websockets import stream_logs, handle_terminal
 
 
 # Application base path (parent of /app)
@@ -182,6 +184,53 @@ async def delete_project(project_id: int, session: Session = Depends(get_session
 # ============================================================================
 # JOB ENDPOINTS
 # ============================================================================
+
+@app.post("/projects/{project_id}/pull", response_model=JobRead)
+async def pull_project(
+    project_id: int,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session)
+):
+    """
+    Execute git pull in the project workspace.
+    Creates a new job and streams logs via WebSocket.
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project.status == ProjectStatus.RUNNING:
+        raise HTTPException(status_code=400, detail="Project is already running")
+
+    if project.status == ProjectStatus.CLONING:
+        raise HTTPException(status_code=400, detail="Project is still cloning")
+
+    if not project.workspace_path:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
+    # Create job for git pull
+    job = Job(
+        project_id=project_id,
+        status=JobStatus.PENDING,
+        command_name="pull",
+        command_executed="git pull"
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    # Run git pull in background
+    async def pull_task():
+        with Session(engine) as bg_session:
+            proj = bg_session.get(Project, project_id)
+            j = bg_session.get(Job, job.id)
+            manager = get_process_manager()
+            await manager.git_pull(proj, j, bg_session)
+
+    background_tasks.add_task(pull_task)
+
+    return job
+
 
 @app.post("/projects/{project_id}/install", response_model=JobRead)
 async def install_project(
@@ -472,6 +521,145 @@ async def run_command_template(
     background_tasks.add_task(run_task)
 
     return job
+
+
+# ============================================================================
+# FILE EXPLORER ENDPOINTS
+# ============================================================================
+
+@app.get("/projects/{project_id}/files", response_model=List[FileInfo])
+def list_files(
+    project_id: int,
+    path: str = "",
+    session: Session = Depends(get_session)
+):
+    """
+    List files and directories at a given path within the project workspace.
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.workspace_path:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
+    manager = get_process_manager()
+    try:
+        files = manager.list_directory(project_id, path)
+        return files
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/projects/{project_id}/files/content")
+def get_file_content(
+    project_id: int,
+    path: str,
+    session: Session = Depends(get_session)
+):
+    """
+    Get the content of a text file.
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.workspace_path:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
+    manager = get_process_manager()
+    try:
+        content = manager.get_file_content(project_id, path)
+        return PlainTextResponse(content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/projects/{project_id}/files/download")
+def download_file(
+    project_id: int,
+    path: str,
+    session: Session = Depends(get_session)
+):
+    """
+    Download a single file.
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.workspace_path:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
+    manager = get_process_manager()
+    try:
+        file_path = manager.get_file_path(project_id, path)
+        return FileResponse(
+            path=file_path,
+            filename=file_path.name,
+            media_type="application/octet-stream"
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/projects/{project_id}/files/download-zip")
+def download_folder_zip(
+    project_id: int,
+    path: str = "",
+    session: Session = Depends(get_session)
+):
+    """
+    Download a folder as a ZIP archive.
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.workspace_path:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
+    manager = get_process_manager()
+    try:
+        zip_path = manager.create_zip_archive(project_id, path)
+        folder_name = Path(path).name if path else project.name
+        return FileResponse(
+            path=zip_path,
+            filename=f"{folder_name}.zip",
+            media_type="application/zip",
+            background=None  # Don't delete immediately, let client finish download
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ============================================================================
+# TERMINAL ENDPOINTS
+# ============================================================================
+
+@app.post("/terminal/start")
+def start_terminal():
+    """
+    Start a new general terminal session.
+    Returns session_id to use with WebSocket.
+    """
+    manager = get_process_manager()
+    session_id = manager.create_terminal_session()
+    return {"session_id": session_id}
+
+
+@app.websocket("/ws/terminal/{session_id}")
+async def websocket_terminal(websocket: WebSocket, session_id: int):
+    """
+    WebSocket endpoint for interactive terminal.
+
+    Protocol:
+    - Client sends: {"type": "command", "data": "command string"}
+    - Server sends: {"type": "output", "data": "output line"}
+    - Server sends: {"type": "exit", "code": exit_code}
+    - Server sends: {"type": "error", "data": "error message"}
+    """
+    await handle_terminal(websocket, session_id)
 
 
 # ============================================================================

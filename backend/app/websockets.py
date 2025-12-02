@@ -119,3 +119,66 @@ async def stream_logs(websocket: WebSocket, job_id: int):
             await websocket.close()
         except:
             pass
+
+
+async def handle_terminal(websocket: WebSocket, session_id: int):
+    """
+    WebSocket handler for interactive terminal.
+
+    Protocol:
+    - Client sends: {"type": "command", "data": "command to execute"}
+    - Server sends: {"type": "output", "data": "output line"}
+    - Server sends: {"type": "exit", "code": 0}
+    - Server sends: {"type": "error", "data": "error message"}
+
+    Args:
+        websocket: FastAPI WebSocket connection
+        session_id: Terminal session ID
+    """
+    await websocket.accept()
+
+    manager = get_process_manager()
+    queue = manager.subscribe_to_terminal(session_id)
+
+    # Task to send output from queue to websocket
+    async def send_output():
+        try:
+            while True:
+                msg = await queue.get()
+                await websocket.send_json(msg)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"Error sending terminal output: {e}")
+
+    # Start the output sender task
+    output_task = asyncio.create_task(send_output())
+
+    try:
+        # Send welcome message
+        await websocket.send_json({
+            "type": "output",
+            "data": f"Terminal session {session_id} started.\nWorking directory: {manager.terminal_workspace}\n\n"
+        })
+
+        while True:
+            # Receive command from client
+            data = await websocket.receive_json()
+
+            if data.get("type") == "command":
+                command = data.get("data", "").strip()
+                if command:
+                    # Execute command asynchronously
+                    await manager.execute_terminal_command(session_id, command)
+
+    except WebSocketDisconnect:
+        print(f"Terminal WebSocket disconnected for session {session_id}")
+    except Exception as e:
+        print(f"Terminal WebSocket error for session {session_id}: {e}")
+    finally:
+        output_task.cancel()
+        manager.unsubscribe_from_terminal(session_id, queue)
+        try:
+            await websocket.close()
+        except:
+            pass

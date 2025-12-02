@@ -105,6 +105,15 @@ export async function runProject(projectId) {
 }
 
 /**
+ * Execute git pull for a project
+ */
+export async function pullProject(projectId) {
+  return apiFetch(`/projects/${projectId}/pull`, {
+    method: 'POST',
+  });
+}
+
+/**
  * Get all jobs for a project
  */
 export async function getProjectJobs(projectId) {
@@ -174,6 +183,66 @@ export async function runCommandTemplate(projectId, commandId) {
   return apiFetch(`/projects/${projectId}/commands/${commandId}/run`, {
     method: 'POST',
   });
+}
+
+// ============================================================================
+// FILE EXPLORER API
+// ============================================================================
+
+/**
+ * List files and directories at a path
+ */
+export async function listFiles(projectId, path = '') {
+  return apiFetch(`/projects/${projectId}/files?path=${encodeURIComponent(path)}`);
+}
+
+/**
+ * Get file content
+ */
+export async function getFileContent(projectId, path) {
+  const url = `${API_BASE}/projects/${projectId}/files/content?path=${encodeURIComponent(path)}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || `HTTP ${response.status}`);
+  }
+  return response.text();
+}
+
+/**
+ * Get file download URL
+ */
+export function getFileDownloadUrl(projectId, path) {
+  return `${API_BASE}/projects/${projectId}/files/download?path=${encodeURIComponent(path)}`;
+}
+
+/**
+ * Get folder ZIP download URL
+ */
+export function getFolderZipUrl(projectId, path = '') {
+  return `${API_BASE}/projects/${projectId}/files/download-zip?path=${encodeURIComponent(path)}`;
+}
+
+// ============================================================================
+// TERMINAL API
+// ============================================================================
+
+/**
+ * Start a new terminal session
+ */
+export async function startTerminalSession() {
+  return apiFetch('/terminal/start', {
+    method: 'POST',
+  });
+}
+
+/**
+ * Get WebSocket URL for terminal
+ */
+export function getTerminalWebSocketUrl(sessionId) {
+  const { hostname } = window.location;
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${wsProtocol}//${hostname}:8000/ws/terminal/${sessionId}`;
 }
 
 // ============================================================================

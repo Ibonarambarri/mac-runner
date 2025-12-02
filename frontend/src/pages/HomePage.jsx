@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Terminal, Plus, RefreshCw, Cpu } from 'lucide-react';
+import { Terminal, Plus, RefreshCw, Cpu, TerminalSquare } from 'lucide-react';
 
 import { ProjectCard } from '../components/ProjectCard';
 import { NewProjectModal } from '../components/NewProjectModal';
+import { TerminalModal } from '../components/TerminalModal';
 import { getProjects, createProject, deleteProject } from '../api';
 
 /**
@@ -18,6 +19,7 @@ function HomePage() {
   // State
   const [projects, setProjects] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isTerminalOpen, setIsTerminalOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState(null);
 
@@ -87,6 +89,13 @@ function HomePage() {
             </div>
 
             <div className="flex items-center gap-2 sm:gap-3">
+              <button
+                onClick={() => setIsTerminalOpen(true)}
+                className="p-2.5 sm:p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors touch-manipulation"
+                title="Terminal"
+              >
+                <TerminalSquare className="w-5 h-5" />
+              </button>
               <button
                 onClick={fetchProjects}
                 className="p-2.5 sm:p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors touch-manipulation"
@@ -159,6 +168,12 @@ function HomePage() {
         onClose={() => setIsModalOpen(false)}
         onSubmit={handleCreateProject}
         isLoading={isCreating}
+      />
+
+      {/* Terminal Modal */}
+      <TerminalModal
+        isOpen={isTerminalOpen}
+        onClose={() => setIsTerminalOpen(false)}
       />
     </div>
   );

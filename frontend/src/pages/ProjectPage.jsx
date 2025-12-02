@@ -6,22 +6,27 @@ import {
   Square,
   Download,
   GitBranch,
+  GitPullRequest,
   Clock,
   Loader2,
   CheckCircle2,
   XCircle,
   AlertCircle,
   RefreshCw,
+  FolderOpen,
+  Terminal,
 } from 'lucide-react';
 
 import { LogViewer } from '../components/LogViewer';
 import { CommandSection } from '../components/CommandSection';
+import { FileExplorer } from '../components/FileExplorer';
 import { useLogStream } from '../hooks/useLogStream';
 import {
   getProject,
   getProjectJobs,
   runProject,
   installProject,
+  pullProject,
   stopJob,
   getCommandTemplates,
   runCommandTemplate,
@@ -77,6 +82,7 @@ function ProjectPage() {
   const [selectedJobId, setSelectedJobId] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('actions'); // 'actions' | 'files'
 
   // Log streaming hook
   const { logs, isConnected, isComplete, error: wsError, clearLogs } = useLogStream(selectedJobId);
@@ -123,6 +129,17 @@ function ProjectPage() {
   const handleInstall = async () => {
     try {
       const job = await installProject(projectId);
+      setSelectedJobId(job.id);
+      clearLogs();
+      await fetchData();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handlePull = async () => {
+    try {
+      const job = await pullProject(projectId);
       setSelectedJobId(job.id);
       clearLogs();
       await fetchData();
@@ -248,118 +265,159 @@ function ProjectPage() {
       {/* Main content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left column: Actions + Commands */}
+          {/* Left column: Tabs + Content */}
           <div className="space-y-6">
-            {/* Quick Actions */}
-            <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
-              <h2 className="text-sm font-semibold text-slate-400 mb-4">Quick Actions</h2>
-              <div className="flex flex-wrap gap-3">
-                {isRunning ? (
-                  <button
-                    onClick={handleStop}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors"
-                  >
-                    <Square className="w-4 h-4" />
-                    Stop
-                  </button>
-                ) : (
-                  <>
+            {/* Tab switcher */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setActiveTab('actions')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors touch-manipulation ${
+                  activeTab === 'actions'
+                    ? 'bg-terminal-green/20 text-terminal-green'
+                    : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Terminal className="w-4 h-4" />
+                Actions
+              </button>
+              <button
+                onClick={() => setActiveTab('files')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors touch-manipulation ${
+                  activeTab === 'files'
+                    ? 'bg-terminal-green/20 text-terminal-green'
+                    : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <FolderOpen className="w-4 h-4" />
+                Files
+              </button>
+            </div>
+
+            {activeTab === 'actions' ? (
+              <>
+                {/* Quick Actions */}
+                <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
+                  <h2 className="text-sm font-semibold text-slate-400 mb-4">Quick Actions</h2>
+                  <div className="flex flex-wrap gap-3">
+                    {isRunning ? (
+                      <button
+                        onClick={handleStop}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors"
+                      >
+                        <Square className="w-4 h-4" />
+                        Stop
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={handleRun}
+                          disabled={isCloning}
+                          className="flex items-center gap-2 px-4 py-2.5 bg-terminal-green/20 text-terminal-green rounded-lg hover:bg-terminal-green/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                        >
+                          <Play className="w-4 h-4" />
+                          Run
+                        </button>
+                        <button
+                          onClick={handleInstall}
+                          disabled={isCloning}
+                          className="flex items-center gap-2 px-4 py-2.5 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                        >
+                          <Download className="w-4 h-4" />
+                          Install
+                        </button>
+                        <button
+                          onClick={handlePull}
+                          disabled={isCloning}
+                          className="flex items-center gap-2 px-4 py-2.5 bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                        >
+                          <GitPullRequest className="w-4 h-4" />
+                          Pull
+                        </button>
+                      </>
+                    )}
                     <button
-                      onClick={handleRun}
-                      disabled={isCloning}
-                      className="flex items-center gap-2 px-4 py-2.5 bg-terminal-green/20 text-terminal-green rounded-lg hover:bg-terminal-green/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      onClick={fetchData}
+                      className="p-2.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors ml-auto"
                     >
-                      <Play className="w-4 h-4" />
-                      Run
+                      <RefreshCw className="w-4 h-4" />
                     </button>
-                    <button
-                      onClick={handleInstall}
-                      disabled={isCloning}
-                      className="flex items-center gap-2 px-4 py-2.5 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <Download className="w-4 h-4" />
-                      Install
-                    </button>
-                  </>
-                )}
-                <button
-                  onClick={fetchData}
-                  className="p-2.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors ml-auto"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                </button>
-              </div>
+                  </div>
 
-              {/* Default commands info */}
-              <div className="mt-4 pt-4 border-t border-slate-800 space-y-2 text-sm">
-                <div className="flex items-start gap-2">
-                  <span className="text-slate-500 w-16 flex-shrink-0">Install:</span>
-                  <code className="text-slate-300 font-mono text-xs bg-slate-800 px-2 py-1 rounded">
-                    {project.install_command}
-                  </code>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-slate-500 w-16 flex-shrink-0">Run:</span>
-                  <code className="text-slate-300 font-mono text-xs bg-slate-800 px-2 py-1 rounded">
-                    {project.run_command}
-                  </code>
-                </div>
-              </div>
-            </section>
+                  {/* Default commands info */}
+                  <div className="mt-4 pt-4 border-t border-slate-800 space-y-2 text-sm">
+                    <div className="flex items-start gap-2">
+                      <span className="text-slate-500 w-16 flex-shrink-0">Install:</span>
+                      <code className="text-slate-300 font-mono text-xs bg-slate-800 px-2 py-1 rounded">
+                        {project.install_command}
+                      </code>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-slate-500 w-16 flex-shrink-0">Run:</span>
+                      <code className="text-slate-300 font-mono text-xs bg-slate-800 px-2 py-1 rounded">
+                        {project.run_command}
+                      </code>
+                    </div>
+                  </div>
+                </section>
 
-            {/* Command Templates */}
-            <CommandSection
-              projectId={projectId}
-              commands={commands}
-              onRunCommand={handleRunCommand}
-              onCommandsChange={fetchData}
-              disabled={isRunning || isCloning}
-            />
+                {/* Command Templates */}
+                <CommandSection
+                  projectId={projectId}
+                  commands={commands}
+                  onRunCommand={handleRunCommand}
+                  onCommandsChange={fetchData}
+                  disabled={isRunning || isCloning}
+                />
 
-            {/* Job History */}
-            <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
-              <h2 className="text-sm font-semibold text-slate-400 mb-4">Job History</h2>
-              {jobs.length === 0 ? (
-                <p className="text-slate-500 text-sm">No jobs yet</p>
-              ) : (
-                <div className="space-y-1 max-h-64 overflow-y-auto">
-                  {jobs.slice(0, 10).map((job) => (
-                    <button
-                      key={job.id}
-                      onClick={() => handleSelectJob(job.id)}
-                      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
-                        selectedJobId === job.id
-                          ? 'bg-terminal-green/10 text-terminal-green'
-                          : 'hover:bg-slate-800 text-slate-400'
-                      }`}
-                    >
-                      {job.status === 'running' && (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-terminal-green flex-shrink-0" />
-                      )}
-                      {job.status === 'completed' && (
-                        <CheckCircle2 className="w-3.5 h-3.5 text-terminal-green flex-shrink-0" />
-                      )}
-                      {job.status === 'failed' && (
-                        <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
-                      )}
-                      {job.status === 'stopped' && (
-                        <Square className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
-                      )}
-                      {job.status === 'pending' && (
-                        <Clock className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
-                      )}
+                {/* Job History */}
+                <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
+                  <h2 className="text-sm font-semibold text-slate-400 mb-4">Job History</h2>
+                  {jobs.length === 0 ? (
+                    <p className="text-slate-500 text-sm">No jobs yet</p>
+                  ) : (
+                    <div className="space-y-1 max-h-64 overflow-y-auto">
+                      {jobs.slice(0, 10).map((job) => (
+                        <button
+                          key={job.id}
+                          onClick={() => handleSelectJob(job.id)}
+                          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
+                            selectedJobId === job.id
+                              ? 'bg-terminal-green/10 text-terminal-green'
+                              : 'hover:bg-slate-800 text-slate-400'
+                          }`}
+                        >
+                          {job.status === 'running' && (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-terminal-green flex-shrink-0" />
+                          )}
+                          {job.status === 'completed' && (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-terminal-green flex-shrink-0" />
+                          )}
+                          {job.status === 'failed' && (
+                            <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+                          )}
+                          {job.status === 'stopped' && (
+                            <Square className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
+                          )}
+                          {job.status === 'pending' && (
+                            <Clock className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+                          )}
 
-                      <span className="flex-1 truncate">
-                        #{job.id} {job.command_name && `- ${job.command_name}`}
-                      </span>
-                      <span className="text-xs text-slate-500 flex-shrink-0">
-                        {new Date(job.start_time).toLocaleTimeString()}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </section>
+                          <span className="flex-1 truncate">
+                            #{job.id} {job.command_name && `- ${job.command_name}`}
+                          </span>
+                          <span className="text-xs text-slate-500 flex-shrink-0">
+                            {new Date(job.start_time).toLocaleTimeString()}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </>
+            ) : (
+              /* Files Tab */
+              <FileExplorer projectId={projectId} />
+            )}
           </div>
 
           {/* Right column: Log Viewer */}
