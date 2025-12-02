@@ -65,34 +65,18 @@ const STATUS_CONFIG = {
 };
 
 /**
- * Get color classes for job type
+ * Get color class for job type text
  */
-function getJobTypeColors(commandName) {
+function getJobTypeColor(commandName) {
   switch (commandName) {
     case 'run':
-      return {
-        text: 'text-terminal-green',
-        hover: 'hover:bg-terminal-green/10',
-        selected: 'bg-terminal-green/10 text-terminal-green',
-      };
+      return 'text-terminal-green';
     case 'install':
-      return {
-        text: 'text-blue-400',
-        hover: 'hover:bg-blue-500/10',
-        selected: 'bg-blue-500/10 text-blue-400',
-      };
+      return 'text-blue-400';
     case 'pull':
-      return {
-        text: 'text-purple-400',
-        hover: 'hover:bg-purple-500/10',
-        selected: 'bg-purple-500/10 text-purple-400',
-      };
+      return 'text-purple-400';
     default:
-      return {
-        text: 'text-slate-400',
-        hover: 'hover:bg-slate-800',
-        selected: 'bg-slate-700/50 text-slate-300',
-      };
+      return 'text-slate-400';
   }
 }
 
@@ -434,43 +418,40 @@ function ProjectPage() {
                     <p className="text-slate-500 text-sm">No jobs yet</p>
                   ) : (
                     <div className="space-y-1 max-h-64 overflow-y-auto">
-                      {jobs.slice(0, 10).map((job) => {
-                        const colors = getJobTypeColors(job.command_name);
-                        return (
-                          <button
-                            key={job.id}
-                            onClick={() => handleSelectJob(job.id)}
-                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
-                              selectedJobId === job.id
-                                ? colors.selected
-                                : `${colors.hover} ${colors.text}`
-                            }`}
-                          >
-                            {job.status === 'running' && (
-                              <Loader2 className={`w-3.5 h-3.5 animate-spin flex-shrink-0 ${colors.text}`} />
-                            )}
-                            {job.status === 'completed' && (
-                              <CheckCircle2 className={`w-3.5 h-3.5 flex-shrink-0 ${colors.text}`} />
-                            )}
-                            {job.status === 'failed' && (
-                              <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
-                            )}
-                            {job.status === 'stopped' && (
-                              <Square className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
-                            )}
-                            {job.status === 'pending' && (
-                              <Clock className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
-                            )}
+                      {jobs.slice(0, 10).map((job) => (
+                        <button
+                          key={job.id}
+                          onClick={() => handleSelectJob(job.id)}
+                          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
+                            selectedJobId === job.id
+                              ? 'bg-terminal-green/10 text-terminal-green'
+                              : 'hover:bg-slate-800'
+                          }`}
+                        >
+                          {job.status === 'running' && (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-terminal-green flex-shrink-0" />
+                          )}
+                          {job.status === 'completed' && (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-terminal-green flex-shrink-0" />
+                          )}
+                          {job.status === 'failed' && (
+                            <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+                          )}
+                          {job.status === 'stopped' && (
+                            <Square className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
+                          )}
+                          {job.status === 'pending' && (
+                            <Clock className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+                          )}
 
-                            <span className="flex-1 truncate">
-                              #{job.id} {job.command_name && `- ${job.command_name}`}
-                            </span>
-                            <span className="text-xs text-slate-500 flex-shrink-0">
-                              {new Date(job.start_time).toLocaleTimeString()}
-                            </span>
-                          </button>
-                        );
-                      })}
+                          <span className={`flex-1 truncate ${selectedJobId === job.id ? '' : getJobTypeColor(job.command_name)}`}>
+                            #{job.id} {job.command_name && `- ${job.command_name}`}
+                          </span>
+                          <span className="text-xs text-slate-500 flex-shrink-0">
+                            {new Date(job.start_time).toLocaleTimeString()}
+                          </span>
+                        </button>
+                      ))}
                     </div>
                   )}
                 </section>
