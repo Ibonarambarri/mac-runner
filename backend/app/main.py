@@ -432,16 +432,6 @@ def create_command_template(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Check if template with same name already exists
-    existing = session.exec(
-        select(CommandTemplate).where(
-            CommandTemplate.project_id == project_id,
-            CommandTemplate.name == template_data.name
-        )
-    ).first()
-    if existing:
-        raise HTTPException(status_code=400, detail=f"Template '{template_data.name}' already exists")
-
     template = CommandTemplate(project_id=project_id, **template_data.model_dump())
     session.add(template)
     session.commit()
