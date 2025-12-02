@@ -19,28 +19,28 @@ export function CommandSection({
   disabled,
 }) {
   const [isCreating, setIsCreating] = useState(false);
-  const [newName, setNewName] = useState('');
   const [newCommand, setNewCommand] = useState('');
-  const [newDescription, setNewDescription] = useState('');
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const handleCreate = async (e) => {
     e.preventDefault();
-    if (!newName.trim() || !newCommand.trim()) return;
+    if (!newCommand.trim()) return;
 
     setSaving(true);
     setError(null);
 
     try {
+      // Auto-generate name from command (first word or "custom")
+      const cmdParts = newCommand.trim().split(/\s+/);
+      const autoName = cmdParts[0] || 'custom';
+
       await createCommandTemplate(projectId, {
-        name: newName.trim(),
+        name: autoName,
         command: newCommand.trim(),
-        description: newDescription.trim() || null,
+        description: null,
       });
-      setNewName('');
       setNewCommand('');
-      setNewDescription('');
       setIsCreating(false);
       onCommandsChange();
     } catch (e) {
@@ -91,58 +91,33 @@ export function CommandSection({
 
       {/* Create form */}
       {isCreating && (
-        <form onSubmit={handleCreate} className="mb-4 p-3 bg-slate-800/50 rounded-lg space-y-3">
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Name *</label>
-            <input
-              type="text"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="e.g., test, build, deploy"
-              className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-terminal-green"
-              autoFocus
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Command *</label>
+        <form onSubmit={handleCreate} className="mb-4 p-3 bg-slate-800/50 rounded-lg">
+          <div className="flex gap-2">
             <input
               type="text"
               value={newCommand}
               onChange={(e) => setNewCommand(e.target.value)}
               placeholder="e.g., pytest, npm run build"
-              className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm font-mono text-slate-200 placeholder-slate-500 focus:outline-none focus:border-terminal-green"
+              className="flex-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm font-mono text-slate-200 placeholder-slate-500 focus:outline-none focus:border-terminal-green"
+              autoFocus
             />
-          </div>
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Description (optional)</label>
-            <input
-              type="text"
-              value={newDescription}
-              onChange={(e) => setNewDescription(e.target.value)}
-              placeholder="What does this command do?"
-              className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-terminal-green"
-            />
-          </div>
-          <div className="flex gap-2 pt-1">
             <button
               type="submit"
-              disabled={saving || !newName.trim() || !newCommand.trim()}
-              className="flex-1 px-3 py-2 bg-terminal-green/20 text-terminal-green text-sm rounded hover:bg-terminal-green/30 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={saving || !newCommand.trim()}
+              className="px-3 py-2 bg-terminal-green/20 text-terminal-green text-sm rounded hover:bg-terminal-green/30 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {saving ? 'Saving...' : 'Save'}
+              {saving ? '...' : 'Add'}
             </button>
             <button
               type="button"
               onClick={() => {
                 setIsCreating(false);
-                setNewName('');
                 setNewCommand('');
-                setNewDescription('');
                 setError(null);
               }}
               className="px-3 py-2 bg-slate-700 text-slate-300 text-sm rounded hover:bg-slate-600"
             >
-              Cancel
+              <X className="w-4 h-4" />
             </button>
           </div>
         </form>
@@ -158,32 +133,22 @@ export function CommandSection({
           {commands.map((cmd) => (
             <div
               key={cmd.id}
-              className="flex items-center gap-3 p-3 bg-slate-800/30 rounded-lg group"
+              className="flex items-center gap-3 p-2 bg-slate-800/30 rounded-lg group"
             >
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-slate-200">{cmd.name}</span>
-                  {cmd.description && (
-                    <span className="text-xs text-slate-500 truncate">
-                      — {cmd.description}
-                    </span>
-                  )}
-                </div>
-                <code className="text-xs text-slate-400 font-mono">{cmd.command}</code>
-              </div>
+              <code className="flex-1 text-sm text-slate-300 font-mono truncate">{cmd.command}</code>
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
                   onClick={() => onRunCommand(cmd.id)}
                   disabled={disabled}
-                  className="p-2 text-terminal-green hover:bg-terminal-green/20 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="p-1.5 text-terminal-green hover:bg-terminal-green/20 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Run command"
                 >
                   <Play className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => handleDelete(cmd.id, cmd.name)}
+                  onClick={() => handleDelete(cmd.id, cmd.command)}
                   disabled={disabled}
-                  className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Delete command"
                 >
                   <Trash2 className="w-4 h-4" />

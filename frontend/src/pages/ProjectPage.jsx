@@ -15,6 +15,9 @@ import {
   RefreshCw,
   FolderOpen,
   Terminal,
+  Pencil,
+  Check,
+  X,
 } from 'lucide-react';
 
 import { LogViewer } from '../components/LogViewer';
@@ -30,6 +33,7 @@ import {
   stopJob,
   getCommandTemplates,
   runCommandTemplate,
+  updateProject,
 } from '../api';
 
 /**
@@ -61,6 +65,22 @@ const STATUS_CONFIG = {
 };
 
 /**
+ * Get color class for job type
+ */
+function getJobTypeColor(commandName) {
+  switch (commandName) {
+    case 'run':
+      return 'text-terminal-green';
+    case 'install':
+      return 'text-blue-400';
+    case 'pull':
+      return 'text-purple-400';
+    default:
+      return 'text-slate-400';
+  }
+}
+
+/**
  * ProjectPage Component
  *
  * Detail page for a single project with:
@@ -83,6 +103,12 @@ function ProjectPage() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('actions'); // 'actions' | 'files'
+
+  // Edit commands state
+  const [editingInstall, setEditingInstall] = useState(false);
+  const [editingRun, setEditingRun] = useState(false);
+  const [editInstallValue, setEditInstallValue] = useState('');
+  const [editRunValue, setEditRunValue] = useState('');
 
   // Log streaming hook
   const { logs, isConnected, isComplete, error: wsError, clearLogs } = useLogStream(selectedJobId);
@@ -154,6 +180,26 @@ function ProjectPage() {
 
     try {
       await stopJob(runningJob.id);
+      await fetchData();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleSaveInstall = async () => {
+    try {
+      await updateProject(projectId, { install_command: editInstallValue });
+      setEditingInstall(false);
+      await fetchData();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleSaveRun = async () => {
+    try {
+      await updateProject(projectId, { run_command: editRunValue });
+      setEditingRun(false);
       await fetchData();
     } catch (e) {
       setError(e.message);
@@ -296,7 +342,7 @@ function ProjectPage() {
             {activeTab === 'actions' ? (
               <>
                 {/* Quick Actions */}
-                <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
+                <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4 group">
                   <h2 className="text-sm font-semibold text-slate-400 mb-4">Quick Actions</h2>
                   <div className="flex flex-wrap gap-3">
                     {isRunning ? (
@@ -344,18 +390,91 @@ function ProjectPage() {
                   </div>
 
                   {/* Default commands info */}
-                  <div className="mt-4 pt-4 border-t border-slate-800 space-y-2 text-sm">
-                    <div className="flex items-start gap-2">
-                      <span className="text-slate-500 w-16 flex-shrink-0">Install:</span>
-                      <code className="text-slate-300 font-mono text-xs bg-slate-800 px-2 py-1 rounded">
-                        {project.install_command}
-                      </code>
+                  <div className="mt-4 pt-4 border-t border-slate-800 space-y-3 text-sm">
+                    {/* Install command */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-500 w-14 flex-shrink-0">Install:</span>
+                      {editingInstall ? (
+                        <>
+                          <input
+                            type="text"
+                            value={editInstallValue}
+                            onChange={(e) => setEditInstallValue(e.target.value)}
+                            className="flex-1 px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs font-mono text-slate-200 focus:outline-none focus:border-terminal-green"
+                            autoFocus
+                          />
+                          <button
+                            onClick={handleSaveInstall}
+                            className="p-1 text-terminal-green hover:bg-terminal-green/20 rounded"
+                          >
+                            <Check className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setEditingInstall(false)}
+                            className="p-1 text-slate-400 hover:bg-slate-700 rounded"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <code className="flex-1 text-slate-300 font-mono text-xs bg-slate-800 px-2 py-1 rounded truncate">
+                            {project.install_command}
+                          </code>
+                          <button
+                            onClick={() => {
+                              setEditInstallValue(project.install_command);
+                              setEditingInstall(true);
+                            }}
+                            className="p-1 text-slate-500 hover:text-slate-300 hover:bg-slate-700 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
-                    <div className="flex items-start gap-2">
-                      <span className="text-slate-500 w-16 flex-shrink-0">Run:</span>
-                      <code className="text-slate-300 font-mono text-xs bg-slate-800 px-2 py-1 rounded">
-                        {project.run_command}
-                      </code>
+
+                    {/* Run command */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-500 w-14 flex-shrink-0">Run:</span>
+                      {editingRun ? (
+                        <>
+                          <input
+                            type="text"
+                            value={editRunValue}
+                            onChange={(e) => setEditRunValue(e.target.value)}
+                            className="flex-1 px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs font-mono text-slate-200 focus:outline-none focus:border-terminal-green"
+                            autoFocus
+                          />
+                          <button
+                            onClick={handleSaveRun}
+                            className="p-1 text-terminal-green hover:bg-terminal-green/20 rounded"
+                          >
+                            <Check className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setEditingRun(false)}
+                            className="p-1 text-slate-400 hover:bg-slate-700 rounded"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <code className="flex-1 text-slate-300 font-mono text-xs bg-slate-800 px-2 py-1 rounded truncate">
+                            {project.run_command}
+                          </code>
+                          <button
+                            onClick={() => {
+                              setEditRunValue(project.run_command);
+                              setEditingRun(true);
+                            }}
+                            className="p-1 text-slate-500 hover:text-slate-300 hover:bg-slate-700 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 </section>
@@ -402,7 +521,7 @@ function ProjectPage() {
                             <Clock className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
                           )}
 
-                          <span className="flex-1 truncate">
+                          <span className={`flex-1 truncate ${getJobTypeColor(job.command_name)}`}>
                             #{job.id} {job.command_name && `- ${job.command_name}`}
                           </span>
                           <span className="text-xs text-slate-500 flex-shrink-0">

@@ -36,11 +36,10 @@ export function useTerminal(sessionId) {
 
         if (msg.type === 'output') {
           setOutput(prev => [...prev, { type: 'output', content: msg.data }]);
-        } else if (msg.type === 'exit') {
-          setOutput(prev => [...prev, { type: 'exit', code: msg.code }]);
         } else if (msg.type === 'error') {
           setOutput(prev => [...prev, { type: 'error', content: msg.data }]);
         }
+        // Note: 'exit' type is intentionally not processed (no exit code display)
       } catch (e) {
         console.error('Error parsing WebSocket message:', e);
       }
@@ -95,6 +94,8 @@ export function useTerminal(sessionId) {
   // Send command to terminal
   const sendCommand = useCallback((command) => {
     if (wsRef.current?.readyState === WebSocket.OPEN && command.trim()) {
+      // Add command to output for visual separation
+      setOutput(prev => [...prev, { type: 'command', content: command }]);
       wsRef.current.send(JSON.stringify({
         type: 'command',
         data: command
