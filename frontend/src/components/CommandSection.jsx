@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Play, Plus, Trash2, Terminal, X } from 'lucide-react';
-import { createCommandTemplate, deleteCommandTemplate } from '../api';
+import { Play, Plus, Trash2, Terminal, X, Settings, Check, Pencil } from 'lucide-react';
+import { createCommandTemplate, deleteCommandTemplate, updateCommandTemplate } from '../api';
 
 /**
  * CommandSection Component
@@ -22,6 +22,10 @@ export function CommandSection({
   const [newCommand, setNewCommand] = useState('');
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
+
+  // Settings modal state
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [editingCommands, setEditingCommands] = useState([]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -61,6 +65,61 @@ export function CommandSection({
     }
   };
 
+  const handleOpenSettings = () => {
+    setEditingCommands(commands.map(cmd => ({ ...cmd, newCommand: cmd.command })));
+    setIsSettingsOpen(true);
+  };
+
+  const handleUpdateCommand = (id, value) => {
+    setEditingCommands(prev =>
+      prev.map(cmd => cmd.id === id ? { ...cmd, newCommand: value } : cmd)
+    );
+  };
+
+  const handleDeleteInSettings = (id) => {
+    setEditingCommands(prev => prev.filter(cmd => cmd.id !== id));
+  };
+
+  const handleSaveSettings = async () => {
+    setSaving(true);
+    setError(null);
+
+    try {
+      // Find commands to update
+      const toUpdate = editingCommands.filter(cmd => {
+        const original = commands.find(c => c.id === cmd.id);
+        return original && original.command !== cmd.newCommand;
+      });
+
+      // Find commands to delete
+      const toDelete = commands.filter(
+        cmd => !editingCommands.find(c => c.id === cmd.id)
+      );
+
+      // Update commands
+      for (const cmd of toUpdate) {
+        const cmdParts = cmd.newCommand.trim().split(/\s+/);
+        const autoName = cmdParts[0] || 'custom';
+        await updateCommandTemplate(projectId, cmd.id, {
+          name: autoName,
+          command: cmd.newCommand.trim(),
+        });
+      }
+
+      // Delete commands
+      for (const cmd of toDelete) {
+        await deleteCommandTemplate(projectId, cmd.id);
+      }
+
+      setIsSettingsOpen(false);
+      onCommandsChange();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
       <div className="flex items-center justify-between mb-4">
@@ -68,16 +127,28 @@ export function CommandSection({
           <Terminal className="w-4 h-4" />
           Command Templates
         </h2>
-        {!isCreating && (
-          <button
-            onClick={() => setIsCreating(true)}
-            disabled={disabled}
-            className="flex items-center gap-1 text-xs text-terminal-green hover:text-terminal-green/80 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {commands.length > 0 && (
+            <button
+              onClick={handleOpenSettings}
+              disabled={disabled}
+              className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Edit commands"
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {!isCreating && (
+            <button
+              onClick={() => setIsCreating(true)}
+              disabled={disabled}
+              className="flex items-center gap-1 text-xs text-terminal-green hover:text-terminal-green/80 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -156,6 +227,69 @@ export function CommandSection({
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Settings Modal */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 w-full max-w-md rounded-xl border border-slate-800 overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50">
+              <div className="flex items-center gap-2">
+                <Terminal className="w-5 h-5 text-slate-400" />
+                <span className="font-semibold text-slate-100">Edit Commands</span>
+              </div>
+              <button
+                onClick={() => setIsSettingsOpen(false)}
+                className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-4 space-y-3 max-h-80 overflow-y-auto">
+              {editingCommands.length === 0 ? (
+                <p className="text-slate-500 text-sm text-center py-4">No commands to edit</p>
+              ) : (
+                editingCommands.map((cmd) => (
+                  <div key={cmd.id} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={cmd.newCommand}
+                      onChange={(e) => handleUpdateCommand(cmd.id, e.target.value)}
+                      className="flex-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm font-mono text-slate-200 focus:outline-none focus:border-terminal-green"
+                    />
+                    <button
+                      onClick={() => handleDeleteInSettings(cmd.id)}
+                      className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                      title="Remove command"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end gap-3 px-4 py-3 border-t border-slate-800 bg-slate-900/30">
+              <button
+                onClick={() => setIsSettingsOpen(false)}
+                className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveSettings}
+                disabled={saving}
+                className="px-4 py-2 text-sm bg-terminal-green text-slate-950 font-semibold rounded-lg hover:bg-terminal-green/90 transition-colors disabled:opacity-50"
+              >
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </section>
