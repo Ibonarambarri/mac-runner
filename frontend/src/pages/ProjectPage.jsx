@@ -15,7 +15,7 @@ import {
   RefreshCw,
   FolderOpen,
   Terminal,
-  Pencil,
+  Settings,
   Check,
   X,
 } from 'lucide-react';
@@ -65,18 +65,34 @@ const STATUS_CONFIG = {
 };
 
 /**
- * Get color class for job type
+ * Get color classes for job type
  */
-function getJobTypeColor(commandName) {
+function getJobTypeColors(commandName) {
   switch (commandName) {
     case 'run':
-      return 'text-terminal-green';
+      return {
+        text: 'text-terminal-green',
+        hover: 'hover:bg-terminal-green/10',
+        selected: 'bg-terminal-green/10 text-terminal-green',
+      };
     case 'install':
-      return 'text-blue-400';
+      return {
+        text: 'text-blue-400',
+        hover: 'hover:bg-blue-500/10',
+        selected: 'bg-blue-500/10 text-blue-400',
+      };
     case 'pull':
-      return 'text-purple-400';
+      return {
+        text: 'text-purple-400',
+        hover: 'hover:bg-purple-500/10',
+        selected: 'bg-purple-500/10 text-purple-400',
+      };
     default:
-      return 'text-slate-400';
+      return {
+        text: 'text-slate-400',
+        hover: 'hover:bg-slate-800',
+        selected: 'bg-slate-700/50 text-slate-300',
+      };
   }
 }
 
@@ -104,11 +120,11 @@ function ProjectPage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('actions'); // 'actions' | 'files'
 
-  // Edit commands state
-  const [editingInstall, setEditingInstall] = useState(false);
-  const [editingRun, setEditingRun] = useState(false);
+  // Settings modal state
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [editInstallValue, setEditInstallValue] = useState('');
   const [editRunValue, setEditRunValue] = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
 
   // Log streaming hook
   const { logs, isConnected, isComplete, error: wsError, clearLogs } = useLogStream(selectedJobId);
@@ -186,23 +202,25 @@ function ProjectPage() {
     }
   };
 
-  const handleSaveInstall = async () => {
-    try {
-      await updateProject(projectId, { install_command: editInstallValue });
-      setEditingInstall(false);
-      await fetchData();
-    } catch (e) {
-      setError(e.message);
-    }
+  const handleOpenSettings = () => {
+    setEditInstallValue(project.install_command);
+    setEditRunValue(project.run_command);
+    setIsSettingsOpen(true);
   };
 
-  const handleSaveRun = async () => {
+  const handleSaveSettings = async () => {
+    setSavingSettings(true);
     try {
-      await updateProject(projectId, { run_command: editRunValue });
-      setEditingRun(false);
+      await updateProject(projectId, {
+        install_command: editInstallValue,
+        run_command: editRunValue,
+      });
+      setIsSettingsOpen(false);
       await fetchData();
     } catch (e) {
       setError(e.message);
+    } finally {
+      setSavingSettings(false);
     }
   };
 
@@ -342,7 +360,7 @@ function ProjectPage() {
             {activeTab === 'actions' ? (
               <>
                 {/* Quick Actions */}
-                <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4 group">
+                <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
                   <h2 className="text-sm font-semibold text-slate-400 mb-4">Quick Actions</h2>
                   <div className="flex flex-wrap gap-3">
                     {isRunning ? (
@@ -381,100 +399,21 @@ function ProjectPage() {
                         </button>
                       </>
                     )}
-                    <button
-                      onClick={fetchData}
-                      className="p-2.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors ml-auto"
-                    >
-                      <RefreshCw className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  {/* Default commands info */}
-                  <div className="mt-4 pt-4 border-t border-slate-800 space-y-3 text-sm">
-                    {/* Install command */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-500 w-14 flex-shrink-0">Install:</span>
-                      {editingInstall ? (
-                        <>
-                          <input
-                            type="text"
-                            value={editInstallValue}
-                            onChange={(e) => setEditInstallValue(e.target.value)}
-                            className="flex-1 px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs font-mono text-slate-200 focus:outline-none focus:border-terminal-green"
-                            autoFocus
-                          />
-                          <button
-                            onClick={handleSaveInstall}
-                            className="p-1 text-terminal-green hover:bg-terminal-green/20 rounded"
-                          >
-                            <Check className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => setEditingInstall(false)}
-                            className="p-1 text-slate-400 hover:bg-slate-700 rounded"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <code className="flex-1 text-slate-300 font-mono text-xs bg-slate-800 px-2 py-1 rounded truncate">
-                            {project.install_command}
-                          </code>
-                          <button
-                            onClick={() => {
-                              setEditInstallValue(project.install_command);
-                              setEditingInstall(true);
-                            }}
-                            className="p-1 text-slate-500 hover:text-slate-300 hover:bg-slate-700 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                        </>
-                      )}
-                    </div>
-
-                    {/* Run command */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-500 w-14 flex-shrink-0">Run:</span>
-                      {editingRun ? (
-                        <>
-                          <input
-                            type="text"
-                            value={editRunValue}
-                            onChange={(e) => setEditRunValue(e.target.value)}
-                            className="flex-1 px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs font-mono text-slate-200 focus:outline-none focus:border-terminal-green"
-                            autoFocus
-                          />
-                          <button
-                            onClick={handleSaveRun}
-                            className="p-1 text-terminal-green hover:bg-terminal-green/20 rounded"
-                          >
-                            <Check className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => setEditingRun(false)}
-                            className="p-1 text-slate-400 hover:bg-slate-700 rounded"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <code className="flex-1 text-slate-300 font-mono text-xs bg-slate-800 px-2 py-1 rounded truncate">
-                            {project.run_command}
-                          </code>
-                          <button
-                            onClick={() => {
-                              setEditRunValue(project.run_command);
-                              setEditingRun(true);
-                            }}
-                            className="p-1 text-slate-500 hover:text-slate-300 hover:bg-slate-700 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                        </>
-                      )}
+                    <div className="flex items-center gap-2 ml-auto">
+                      <button
+                        onClick={handleOpenSettings}
+                        className="p-2.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors touch-manipulation"
+                        title="Settings"
+                      >
+                        <Settings className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={fetchData}
+                        className="p-2.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors touch-manipulation"
+                        title="Refresh"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
                 </section>
@@ -495,40 +434,43 @@ function ProjectPage() {
                     <p className="text-slate-500 text-sm">No jobs yet</p>
                   ) : (
                     <div className="space-y-1 max-h-64 overflow-y-auto">
-                      {jobs.slice(0, 10).map((job) => (
-                        <button
-                          key={job.id}
-                          onClick={() => handleSelectJob(job.id)}
-                          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
-                            selectedJobId === job.id
-                              ? 'bg-terminal-green/10 text-terminal-green'
-                              : 'hover:bg-slate-800 text-slate-400'
-                          }`}
-                        >
-                          {job.status === 'running' && (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin text-terminal-green flex-shrink-0" />
-                          )}
-                          {job.status === 'completed' && (
-                            <CheckCircle2 className="w-3.5 h-3.5 text-terminal-green flex-shrink-0" />
-                          )}
-                          {job.status === 'failed' && (
-                            <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
-                          )}
-                          {job.status === 'stopped' && (
-                            <Square className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
-                          )}
-                          {job.status === 'pending' && (
-                            <Clock className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
-                          )}
+                      {jobs.slice(0, 10).map((job) => {
+                        const colors = getJobTypeColors(job.command_name);
+                        return (
+                          <button
+                            key={job.id}
+                            onClick={() => handleSelectJob(job.id)}
+                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
+                              selectedJobId === job.id
+                                ? colors.selected
+                                : `${colors.hover} ${colors.text}`
+                            }`}
+                          >
+                            {job.status === 'running' && (
+                              <Loader2 className={`w-3.5 h-3.5 animate-spin flex-shrink-0 ${colors.text}`} />
+                            )}
+                            {job.status === 'completed' && (
+                              <CheckCircle2 className={`w-3.5 h-3.5 flex-shrink-0 ${colors.text}`} />
+                            )}
+                            {job.status === 'failed' && (
+                              <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+                            )}
+                            {job.status === 'stopped' && (
+                              <Square className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
+                            )}
+                            {job.status === 'pending' && (
+                              <Clock className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+                            )}
 
-                          <span className={`flex-1 truncate ${getJobTypeColor(job.command_name)}`}>
-                            #{job.id} {job.command_name && `- ${job.command_name}`}
-                          </span>
-                          <span className="text-xs text-slate-500 flex-shrink-0">
-                            {new Date(job.start_time).toLocaleTimeString()}
-                          </span>
-                        </button>
-                      ))}
+                            <span className="flex-1 truncate">
+                              #{job.id} {job.command_name && `- ${job.command_name}`}
+                            </span>
+                            <span className="text-xs text-slate-500 flex-shrink-0">
+                              {new Date(job.start_time).toLocaleTimeString()}
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </section>
@@ -568,6 +510,75 @@ function ProjectPage() {
           </div>
         </div>
       </main>
+
+      {/* Settings Modal */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 w-full max-w-md rounded-xl border border-slate-800 overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50">
+              <div className="flex items-center gap-2">
+                <Settings className="w-5 h-5 text-slate-400" />
+                <span className="font-semibold text-slate-100">Project Settings</span>
+              </div>
+              <button
+                onClick={() => setIsSettingsOpen(false)}
+                className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-4 space-y-4">
+              {/* Install command */}
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-2">
+                  Install Command
+                </label>
+                <input
+                  type="text"
+                  value={editInstallValue}
+                  onChange={(e) => setEditInstallValue(e.target.value)}
+                  placeholder="pip install -r requirements.txt"
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm font-mono text-slate-200 placeholder-slate-500 focus:outline-none focus:border-terminal-green"
+                />
+              </div>
+
+              {/* Run command */}
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-2">
+                  Run Command
+                </label>
+                <input
+                  type="text"
+                  value={editRunValue}
+                  onChange={(e) => setEditRunValue(e.target.value)}
+                  placeholder="python main.py"
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm font-mono text-slate-200 placeholder-slate-500 focus:outline-none focus:border-terminal-green"
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end gap-3 px-4 py-3 border-t border-slate-800 bg-slate-900/30">
+              <button
+                onClick={() => setIsSettingsOpen(false)}
+                className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveSettings}
+                disabled={savingSettings}
+                className="px-4 py-2 text-sm bg-terminal-green text-slate-950 font-semibold rounded-lg hover:bg-terminal-green/90 transition-colors disabled:opacity-50"
+              >
+                {savingSettings ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

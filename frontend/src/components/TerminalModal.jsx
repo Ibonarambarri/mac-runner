@@ -150,13 +150,14 @@ export function TerminalModal({ isOpen, onClose }) {
           ) : (
             output.map((line, index) => (
               <div key={index} className="whitespace-pre-wrap break-all">
-                {line.type === 'command' && (
-                  <div className="mt-3 mb-1 pt-3 border-t border-slate-800 first:mt-0 first:pt-0 first:border-t-0">
-                    <span className="text-terminal-green font-semibold">$ {line.content}</span>
-                  </div>
-                )}
                 {line.type === 'output' && (
-                  <span className={line.content.startsWith('[stderr]') ? 'text-red-400' : 'text-slate-300'}>
+                  <span className={
+                    line.content.startsWith('[stderr]')
+                      ? 'text-red-400'
+                      : line.content.startsWith('$ ')
+                        ? 'text-terminal-green font-semibold'
+                        : 'text-slate-300'
+                  }>
                     {line.content}
                   </span>
                 )}

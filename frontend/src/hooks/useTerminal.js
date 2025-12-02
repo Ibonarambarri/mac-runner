@@ -94,8 +94,6 @@ export function useTerminal(sessionId) {
   // Send command to terminal
   const sendCommand = useCallback((command) => {
     if (wsRef.current?.readyState === WebSocket.OPEN && command.trim()) {
-      // Add command to output for visual separation
-      setOutput(prev => [...prev, { type: 'command', content: command }]);
       wsRef.current.send(JSON.stringify({
         type: 'command',
         data: command
