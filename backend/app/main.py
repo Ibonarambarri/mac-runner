@@ -384,6 +384,25 @@ async def stop_job(job_id: int, session: Session = Depends(get_session)):
         raise HTTPException(status_code=500, detail="Failed to stop job")
 
 
+@app.delete("/jobs/{job_id}")
+async def delete_job(job_id: int, session: Session = Depends(get_session)):
+    """
+    Delete a job from history.
+    Cannot delete running jobs.
+    """
+    job = session.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(status_code=400, detail="Cannot delete a running job")
+
+    session.delete(job)
+    session.commit()
+
+    return {"status": "deleted", "job_id": job_id}
+
+
 # ============================================================================
 # COMMAND TEMPLATE ENDPOINTS
 # ============================================================================

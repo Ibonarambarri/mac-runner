@@ -18,6 +18,7 @@ import {
   Settings,
   Check,
   X,
+  Trash2,
 } from 'lucide-react';
 
 import { LogViewer } from '../components/LogViewer';
@@ -31,6 +32,7 @@ import {
   installProject,
   pullProject,
   stopJob,
+  deleteJob,
   getCommandTemplates,
   runCommandTemplate,
   updateProject,
@@ -222,6 +224,20 @@ function ProjectPage() {
   const handleSelectJob = (jobId) => {
     setSelectedJobId(jobId);
     clearLogs();
+  };
+
+  const handleDeleteJob = async (jobId, e) => {
+    e.stopPropagation(); // Prevent selecting the job when clicking delete
+    try {
+      await deleteJob(jobId);
+      if (selectedJobId === jobId) {
+        setSelectedJobId(null);
+        clearLogs();
+      }
+      await fetchData();
+    } catch (e) {
+      setError(e.message);
+    }
   };
 
   if (loading) {
@@ -419,10 +435,10 @@ function ProjectPage() {
                   ) : (
                     <div className="space-y-1 max-h-64 overflow-y-auto">
                       {jobs.slice(0, 10).map((job) => (
-                        <button
+                        <div
                           key={job.id}
                           onClick={() => handleSelectJob(job.id)}
-                          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
+                          className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer group ${
                             selectedJobId === job.id
                               ? 'bg-terminal-green/10 text-terminal-green'
                               : 'hover:bg-slate-800'
@@ -450,7 +466,16 @@ function ProjectPage() {
                           <span className="text-xs text-slate-500 flex-shrink-0">
                             {new Date(job.start_time).toLocaleTimeString()}
                           </span>
-                        </button>
+                          {job.status !== 'running' && (
+                            <button
+                              onClick={(e) => handleDeleteJob(job.id, e)}
+                              className="p-1 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
+                              title="Delete job"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       ))}
                     </div>
                   )}

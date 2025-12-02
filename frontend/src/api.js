@@ -136,6 +136,15 @@ export async function stopJob(jobId) {
   });
 }
 
+/**
+ * Delete a job from history
+ */
+export async function deleteJob(jobId) {
+  return apiFetch(`/jobs/${jobId}`, {
+    method: 'DELETE',
+  });
+}
+
 // ============================================================================
 // COMMAND TEMPLATES API
 // ============================================================================
