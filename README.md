@@ -185,9 +185,30 @@ DATABASE_URL=sqlite:///./macrunner.db
 
 El backend está configurado para escuchar en `0.0.0.0`, permitiendo acceso desde otros dispositivos en tu red local. Usa la IP de tu Mac seguida del puerto 5173.
 
-### Tailscale (opcional)
+### Acceso Remoto con Tailscale
 
-MacRunner detecta automáticamente si tienes Tailscale configurado y mostrará las URLs de acceso correspondientes.
+Para acceder a MacRunner desde fuera de tu red local, es necesario usar [Tailscale](https://tailscale.com/).
+
+#### Instalación de Tailscale
+
+1. Descarga e instala Tailscale desde https://tailscale.com/download
+2. Inicia sesión con tu cuenta
+3. Asegúrate de que tanto el servidor (Mac donde corre MacRunner) como el cliente (dispositivo desde donde quieres acceder) estén conectados a la misma red Tailscale
+
+#### Configuración
+
+MacRunner detecta automáticamente si tienes Tailscale configurado y mostrará las URLs de acceso correspondientes en la interfaz.
+
+Una vez configurado, podrás acceder desde cualquier lugar usando la URL de Tailscale:
+```
+http://<nombre-de-tu-mac>.tailnet-xxxx.ts.net:5173
+```
+
+#### Ventajas de Tailscale
+- Conexión segura cifrada de extremo a extremo
+- No requiere abrir puertos en el router
+- Funciona a través de NAT y firewalls
+- Sin necesidad de configurar VPN tradicional
 
 ## Solución de Problemas
 
