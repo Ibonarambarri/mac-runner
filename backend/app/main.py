@@ -4,10 +4,13 @@ REST API endpoints and WebSocket routes for the task orchestration system.
 """
 
 import asyncio
+import os
+import socket
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -26,6 +29,52 @@ from .websockets import stream_logs, handle_terminal, handle_status_websocket, b
 
 # Application base path (parent of /app)
 BASE_PATH = Path(__file__).parent.parent
+
+# Load environment variables from root .env file
+ROOT_ENV_PATH = BASE_PATH / ".env"
+if ROOT_ENV_PATH.exists():
+    load_dotenv(ROOT_ENV_PATH)
+    print(f"📦 Loaded environment from {ROOT_ENV_PATH}")
+
+
+def get_accessible_hostname() -> str:
+    """
+    Determine the best hostname/IP to use for accessible URLs.
+
+    Priority:
+    1. TAILSCALE_URL or BASE_URL environment variable (e.g., "mac-mini.tail171eca.ts.net")
+    2. Tailscale IP detection (100.x.x.x range)
+    3. Fallback to socket.gethostname()
+
+    Returns:
+        Hostname or IP address string (without protocol)
+    """
+    # Priority 1: Check environment variables
+    tailscale_url = os.environ.get("TAILSCALE_URL") or os.environ.get("BASE_URL")
+    if tailscale_url:
+        # Strip protocol if present (e.g., "http://host" -> "host")
+        if "://" in tailscale_url:
+            tailscale_url = tailscale_url.split("://", 1)[1]
+        # Strip trailing slash if present
+        tailscale_url = tailscale_url.rstrip("/")
+        return tailscale_url
+
+    # Priority 2: Try to detect Tailscale IP (100.x.x.x range)
+    try:
+        import psutil
+        for interface, addrs in psutil.net_if_addrs().items():
+            for addr in addrs:
+                # Check for IPv4 addresses in Tailscale's CGNAT range (100.64.0.0/10)
+                if addr.family == socket.AF_INET and addr.address.startswith("100."):
+                    print(f"🌐 Detected Tailscale IP: {addr.address} on {interface}")
+                    return addr.address
+    except ImportError:
+        print("⚠️ psutil not available for Tailscale IP detection")
+    except Exception as e:
+        print(f"⚠️ Error detecting Tailscale IP: {e}")
+
+    # Priority 3: Fallback to hostname
+    return socket.gethostname()
 
 
 @asynccontextmanager
@@ -1175,9 +1224,8 @@ async def start_jupyter_lab(
             stderr = process.stderr.read().decode() if process.stderr else "Unknown error"
             raise HTTPException(status_code=500, detail=f"Jupyter Lab failed to start: {stderr}")
 
-        # Build the URL
-        import socket
-        hostname = socket.gethostname()
+        # Build the URL using Tailscale-aware hostname detection
+        hostname = get_accessible_hostname()
         url = f"http://{hostname}:{port}/lab?token={token}"
 
         # Store process info
@@ -1399,7 +1447,9 @@ async def start_tensorboard(
             stderr = proc.stderr.read().decode() if proc.stderr else ""
             raise HTTPException(status_code=500, detail=f"TensorBoard failed to start: {stderr}")
 
-        url = f"http://localhost:{actual_port}"
+        # Build URL using Tailscale-aware hostname detection
+        hostname = get_accessible_hostname()
+        url = f"http://{hostname}:{actual_port}"
         tensorboard_processes[key] = {
             "process": proc,
             "port": actual_port,
