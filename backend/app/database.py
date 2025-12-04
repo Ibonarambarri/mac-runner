@@ -3,6 +3,7 @@ MacRunner - Database Configuration
 SQLite database setup with SQLModel.
 """
 
+import sqlite3
 from sqlmodel import SQLModel, create_engine, Session
 from pathlib import Path
 
@@ -19,8 +20,35 @@ engine = create_engine(
 )
 
 
+def run_migrations():
+    """
+    Run database migrations for schema changes.
+    SQLite doesn't support ALTER TABLE ADD COLUMN with defaults well,
+    so we check if columns exist and add them if missing.
+    """
+    if not DATABASE_PATH.exists():
+        return  # No database yet, will be created fresh
+
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+
+    # Check if run_command_enabled column exists in project table
+    cursor.execute("PRAGMA table_info(project)")
+    columns = [col[1] for col in cursor.fetchall()]
+
+    if "run_command_enabled" not in columns:
+        print("Migration: Adding run_command_enabled column to project table")
+        cursor.execute("ALTER TABLE project ADD COLUMN run_command_enabled BOOLEAN DEFAULT 1")
+        conn.commit()
+
+    conn.close()
+
+
 def create_db_and_tables():
     """Initialize database and create all tables."""
+    # Run migrations first for existing databases
+    run_migrations()
+    # Create any new tables
     SQLModel.metadata.create_all(engine)
 
 
