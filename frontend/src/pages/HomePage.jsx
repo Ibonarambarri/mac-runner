@@ -4,7 +4,7 @@ import { Terminal, Plus, RefreshCw, Cpu, TerminalSquare } from 'lucide-react';
 
 import { ProjectCard } from '../components/ProjectCard';
 import { NewProjectModal } from '../components/NewProjectModal';
-import { TerminalModal } from '../components/TerminalModal';
+import { useTerminal } from '../contexts/TerminalContext';
 import { getProjects, createProject, deleteProject } from '../api';
 
 /**
@@ -15,11 +15,11 @@ import { getProjects, createProject, deleteProject } from '../api';
  */
 function HomePage() {
   const navigate = useNavigate();
+  const { openTerminal } = useTerminal();
 
   // State
   const [projects, setProjects] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isTerminalOpen, setIsTerminalOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState(null);
 
@@ -90,7 +90,7 @@ function HomePage() {
 
             <div className="flex items-center gap-2 sm:gap-3">
               <button
-                onClick={() => setIsTerminalOpen(true)}
+                onClick={openTerminal}
                 className="p-2.5 sm:p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors touch-manipulation"
                 title="Terminal"
               >
@@ -169,12 +169,7 @@ function HomePage() {
         onSubmit={handleCreateProject}
         isLoading={isCreating}
       />
-
-      {/* Terminal Modal */}
-      <TerminalModal
-        isOpen={isTerminalOpen}
-        onClose={() => setIsTerminalOpen(false)}
-      />
+      {/* Terminal is now rendered at app root via PersistentTerminal */}
     </div>
   );
 }

@@ -315,8 +315,11 @@ async def handle_terminal(websocket: WebSocket, session_id: int):
                 pass
 
         manager.unsubscribe_from_terminal(session_id, queue)
-        # Close the PTY session when WebSocket disconnects
-        manager.close_terminal_session(session_id)
+        # NOTE: Do NOT close the PTY session when WebSocket disconnects
+        # This allows the terminal to persist in the background and
+        # be reconnected later. The session will be cleaned up when
+        # explicitly closed or on server restart.
+        # manager.close_terminal_session(session_id)
 
         try:
             await websocket.close()

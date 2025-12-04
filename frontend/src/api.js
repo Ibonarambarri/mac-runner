@@ -318,6 +318,13 @@ export async function startTerminalSession() {
 }
 
 /**
+ * Check if a terminal session is still alive
+ */
+export async function getTerminalStatus(sessionId) {
+  return apiFetch(`/terminal/${sessionId}/status`);
+}
+
+/**
  * Get WebSocket URL for terminal
  */
 export function getTerminalWebSocketUrl(sessionId) {

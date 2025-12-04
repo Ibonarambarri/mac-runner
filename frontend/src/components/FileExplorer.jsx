@@ -6,6 +6,7 @@ import {
   FileCode,
   Image,
   ChevronRight,
+  ChevronDown,
   Download,
   Archive,
   ArrowLeft,
@@ -13,8 +14,10 @@ import {
   Home,
   CheckSquare,
   Square,
+  Eye,
+  X,
 } from 'lucide-react';
-import { listFiles, getFileDownloadUrl, getFolderZipUrl, getBatchDownloadUrl } from '../api';
+import { listFiles, getFileDownloadUrl, getFolderZipUrl, getBatchDownloadUrl, getFileContent, renderNotebook } from '../api';
 
 /**
  * Get icon component based on file extension
@@ -44,11 +47,38 @@ function formatSize(bytes) {
 }
 
 /**
+ * Check if file is previewable
+ */
+function isPreviewable(extension) {
+  const previewableExtensions = [
+    // Code/Text
+    'txt', 'md', 'json', 'yml', 'yaml', 'xml', 'html', 'css', 'scss',
+    'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'go', 'rs', 'rb', 'php',
+    'sh', 'bash', 'zsh', 'conf', 'cfg', 'ini', 'toml', 'env', 'gitignore', 'dockerfile',
+    // Notebooks
+    'ipynb',
+    // Images
+    'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico',
+  ];
+  return previewableExtensions.includes(extension?.toLowerCase());
+}
+
+/**
+ * Check if file is an image
+ */
+function isImage(extension) {
+  const imageExtensions = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico'];
+  return imageExtensions.includes(extension?.toLowerCase());
+}
+
+/**
  * FileExplorer Component
  *
- * Tree-style file browser with navigation and download.
+ * VS Code-style file browser with split pane.
+ * Left side: File tree
+ * Right side: File preview/editor
  */
-export function FileExplorer({ projectId }) {
+export function FileExplorer({ projectId, fullWidth = false }) {
   const [currentPath, setCurrentPath] = useState('');
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -57,6 +87,12 @@ export function FileExplorer({ projectId }) {
   // Multi-select state
   const [selectMode, setSelectMode] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState(new Set());
+
+  // Preview state
+  const [previewFile, setPreviewFile] = useState(null);
+  const [previewContent, setPreviewContent] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState(null);
 
   // Fetch files for current path
   const fetchFiles = useCallback(async () => {
@@ -79,6 +115,9 @@ export function FileExplorer({ projectId }) {
   // Navigate to a directory
   const navigateTo = (path) => {
     setCurrentPath(path);
+    // Clear preview when navigating
+    setPreviewFile(null);
+    setPreviewContent(null);
   };
 
   // Toggle select mode
@@ -117,173 +156,454 @@ export function FileExplorer({ projectId }) {
     navigateTo(parts.join('/'));
   };
 
-  // Handle file/folder click
-  const handleFileClick = (file) => {
+  // Handle file click - preview or navigate
+  const handleFileClick = async (file) => {
     if (file.is_directory) {
       navigateTo(file.path);
+    } else if (!selectMode) {
+      // Preview the file
+      await loadPreview(file);
     }
-    // For files, do nothing - user can download via button
+  };
+
+  // Load file preview
+  const loadPreview = async (file) => {
+    setPreviewFile(file);
+    setPreviewLoading(true);
+    setPreviewError(null);
+    setPreviewContent(null);
+
+    try {
+      if (file.extension === 'ipynb') {
+        // Render notebook as HTML
+        const result = await renderNotebook(projectId, file.path);
+        setPreviewContent({ type: 'notebook', html: result.html });
+      } else if (isImage(file.extension)) {
+        // Image preview - use download URL
+        setPreviewContent({ type: 'image', url: getFileDownloadUrl(projectId, file.path) });
+      } else if (isPreviewable(file.extension)) {
+        // Text/code preview
+        const content = await getFileContent(projectId, file.path);
+        setPreviewContent({ type: 'text', content, extension: file.extension });
+      } else {
+        setPreviewContent({ type: 'binary' });
+      }
+    } catch (e) {
+      setPreviewError(e.message);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  // Close preview
+  const closePreview = () => {
+    setPreviewFile(null);
+    setPreviewContent(null);
+    setPreviewError(null);
   };
 
   // Build breadcrumb parts
   const breadcrumbParts = currentPath ? currentPath.split('/').filter(Boolean) : [];
 
+  // Determine if we're in full-width split mode
+  const showSplitView = fullWidth;
+
   return (
-    <div className="bg-slate-900/50 border border-slate-800 rounded-lg overflow-hidden h-full">
-      {/* Header with breadcrumb */}
-      <div className="border-b border-slate-800 p-3">
-        <div className="flex items-center gap-2 overflow-x-auto">
-          <button
-            onClick={() => navigateTo('')}
-            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors flex-shrink-0 touch-manipulation"
-            title="Root"
-          >
-            <Home className="w-4 h-4" />
-          </button>
+    <div className={`bg-slate-900/50 border border-slate-800 rounded-lg overflow-hidden ${showSplitView ? 'h-full' : ''}`}>
+      {showSplitView ? (
+        // Split view layout
+        <div className="flex h-full">
+          {/* Left Panel: File Tree */}
+          <div className="w-1/3 min-w-[250px] max-w-[400px] border-r border-slate-800 flex flex-col">
+            {/* Header with breadcrumb */}
+            <div className="border-b border-slate-800 p-3 flex-shrink-0">
+              <div className="flex items-center gap-2 overflow-x-auto">
+                <button
+                  onClick={() => navigateTo('')}
+                  className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors flex-shrink-0 touch-manipulation"
+                  title="Root"
+                >
+                  <Home className="w-4 h-4" />
+                </button>
 
-          {breadcrumbParts.length > 0 && (
-            <>
-              <ChevronRight className="w-4 h-4 text-slate-600 flex-shrink-0" />
-              {breadcrumbParts.map((part, index) => {
-                const path = breadcrumbParts.slice(0, index + 1).join('/');
-                const isLast = index === breadcrumbParts.length - 1;
-                return (
-                  <div key={path} className="flex items-center gap-2 flex-shrink-0">
+                {breadcrumbParts.length > 0 && (
+                  <>
+                    <ChevronRight className="w-4 h-4 text-slate-600 flex-shrink-0" />
+                    {breadcrumbParts.map((part, index) => {
+                      const path = breadcrumbParts.slice(0, index + 1).join('/');
+                      const isLast = index === breadcrumbParts.length - 1;
+                      return (
+                        <div key={path} className="flex items-center gap-2 flex-shrink-0">
+                          <button
+                            onClick={() => !isLast && navigateTo(path)}
+                            className={`text-sm ${
+                              isLast
+                                ? 'text-slate-200 cursor-default'
+                                : 'text-slate-400 hover:text-slate-200'
+                            } touch-manipulation truncate max-w-[100px]`}
+                            title={part}
+                          >
+                            {part}
+                          </button>
+                          {!isLast && <ChevronRight className="w-4 h-4 text-slate-600" />}
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+              </div>
+
+              {/* Actions row */}
+              <div className="flex items-center gap-2 mt-2">
+                {selectMode && selectedPaths.size > 0 && (
+                  <button
+                    onClick={handleBatchDownload}
+                    className="flex items-center gap-1.5 px-2 py-1 text-xs bg-terminal-green/20 text-terminal-green rounded hover:bg-terminal-green/30 transition-colors touch-manipulation"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download ({selectedPaths.size})
+                  </button>
+                )}
+                <div className="ml-auto flex items-center gap-1">
+                  <button
+                    onClick={toggleSelectMode}
+                    className={`p-1.5 rounded transition-colors flex-shrink-0 touch-manipulation ${
+                      selectMode
+                        ? 'bg-terminal-green/20 text-terminal-green'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                    }`}
+                    title={selectMode ? 'Exit select mode' : 'Select files'}
+                  >
+                    <CheckSquare className="w-4 h-4" />
+                  </button>
+                  <a
+                    href={getFolderZipUrl(projectId, currentPath)}
+                    className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors flex-shrink-0 touch-manipulation"
+                    title="Download folder as ZIP"
+                  >
+                    <Archive className="w-4 h-4" />
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            {/* File list */}
+            <div className="flex-1 overflow-y-auto">
+              {loading ? (
+                <div className="flex items-center justify-center p-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-terminal-green" />
+                </div>
+              ) : error ? (
+                <div className="p-4 text-red-400 text-sm">{error}</div>
+              ) : files.length === 0 ? (
+                <div className="p-4 text-slate-500 text-sm">Empty directory</div>
+              ) : (
+                <>
+                  {/* Back button if not at root */}
+                  {currentPath && (
                     <button
-                      onClick={() => !isLast && navigateTo(path)}
-                      className={`text-sm ${
-                        isLast
-                          ? 'text-slate-200 cursor-default'
-                          : 'text-slate-400 hover:text-slate-200'
-                      } touch-manipulation`}
+                      onClick={goBack}
+                      className="w-full flex items-center gap-3 px-4 py-2 hover:bg-slate-800 transition-colors text-left touch-manipulation"
                     >
-                      {part}
+                      <ArrowLeft className="w-4 h-4 text-slate-400" />
+                      <span className="text-sm text-slate-400">..</span>
                     </button>
-                    {!isLast && <ChevronRight className="w-4 h-4 text-slate-600" />}
-                  </div>
-                );
-              })}
-            </>
-          )}
+                  )}
 
-          {/* Select mode and download buttons */}
-          <div className="ml-auto flex items-center gap-2">
-            {selectMode && selectedPaths.size > 0 && (
-              <button
-                onClick={handleBatchDownload}
-                className="flex items-center gap-1.5 px-2 py-1 text-xs bg-terminal-green/20 text-terminal-green rounded hover:bg-terminal-green/30 transition-colors touch-manipulation"
-              >
-                <Download className="w-3.5 h-3.5" />
-                Download {selectedPaths.size} selected
-              </button>
+                  {files.map((file) => {
+                    const FileIcon = getFileIcon(file.extension, file.is_directory);
+                    const isChecked = selectedPaths.has(file.path);
+                    const isSelected = previewFile?.path === file.path;
+
+                    return (
+                      <div
+                        key={file.path}
+                        onClick={() => handleFileClick(file)}
+                        className={`flex items-center gap-2 px-4 py-2 hover:bg-slate-800 transition-colors cursor-pointer group ${
+                          isChecked ? 'bg-slate-800' : ''
+                        } ${isSelected ? 'bg-terminal-green/10 border-l-2 border-terminal-green' : ''}`}
+                      >
+                        {/* Selection checkbox */}
+                        {selectMode && (
+                          <button
+                            onClick={(e) => toggleSelection(file.path, e)}
+                            className="flex-shrink-0 p-0.5 cursor-pointer"
+                          >
+                            {isChecked ? (
+                              <CheckSquare className="w-4 h-4 text-terminal-green" />
+                            ) : (
+                              <Square className="w-4 h-4 text-slate-500 hover:text-slate-300" />
+                            )}
+                          </button>
+                        )}
+
+                        {/* File icon and name */}
+                        <FileIcon className={`w-4 h-4 flex-shrink-0 ${
+                          file.is_directory ? 'text-yellow-400' : file.extension === 'ipynb' ? 'text-orange-400' : 'text-slate-400'
+                        }`} />
+                        <span className="text-sm flex-1 truncate text-slate-300" title={file.name}>
+                          {file.name}
+                        </span>
+
+                        {/* File size */}
+                        {!file.is_directory && (
+                          <span className="text-xs text-slate-500 flex-shrink-0">
+                            {formatSize(file.size)}
+                          </span>
+                        )}
+
+                        {/* Directory arrow */}
+                        {file.is_directory && !selectMode && (
+                          <ChevronRight className="w-4 h-4 text-slate-500" />
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Right Panel: Preview */}
+          <div className="flex-1 flex flex-col bg-slate-950">
+            {previewFile ? (
+              <>
+                {/* Preview Header */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 flex-shrink-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Eye className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    <span className="text-sm text-slate-200 truncate">{previewFile.name}</span>
+                    <span className="text-xs text-slate-500">({formatSize(previewFile.size)})</span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <a
+                      href={getFileDownloadUrl(projectId, previewFile.path)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-terminal-green/20 text-terminal-green rounded hover:bg-terminal-green/30 transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download
+                    </a>
+                    <button
+                      onClick={closePreview}
+                      className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Preview Content */}
+                <div className="flex-1 overflow-auto">
+                  {previewLoading ? (
+                    <div className="flex items-center justify-center h-full">
+                      <Loader2 className="w-6 h-6 animate-spin text-terminal-green" />
+                    </div>
+                  ) : previewError ? (
+                    <div className="flex items-center justify-center h-full p-4">
+                      <p className="text-red-400 text-sm">{previewError}</p>
+                    </div>
+                  ) : previewContent?.type === 'notebook' ? (
+                    <div
+                      className="p-4 notebook-preview"
+                      dangerouslySetInnerHTML={{ __html: previewContent.html }}
+                      style={{ backgroundColor: '#fff', color: '#000' }}
+                    />
+                  ) : previewContent?.type === 'image' ? (
+                    <div className="flex items-center justify-center h-full p-4">
+                      <img
+                        src={previewContent.url}
+                        alt={previewFile.name}
+                        className="max-w-full max-h-full object-contain"
+                      />
+                    </div>
+                  ) : previewContent?.type === 'text' ? (
+                    <pre className="p-4 text-sm text-slate-200 font-mono whitespace-pre-wrap break-all overflow-x-auto">
+                      {previewContent.content}
+                    </pre>
+                  ) : previewContent?.type === 'binary' ? (
+                    <div className="flex flex-col items-center justify-center h-full p-4 gap-4">
+                      <File className="w-12 h-12 text-slate-500" />
+                      <p className="text-slate-400 text-sm">Binary file - cannot preview</p>
+                      <a
+                        href={getFileDownloadUrl(projectId, previewFile.path)}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-terminal-green/20 text-terminal-green rounded-lg hover:bg-terminal-green/30 transition-colors"
+                      >
+                        <Download className="w-4 h-4" />
+                        Download File
+                      </a>
+                    </div>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              // No file selected
+              <div className="flex flex-col items-center justify-center h-full p-8 text-slate-500">
+                <FileText className="w-12 h-12 mb-4 opacity-50" />
+                <p>Select a file to preview</p>
+                <p className="text-sm mt-1">Click on any file in the tree</p>
+              </div>
             )}
-            <button
-              onClick={toggleSelectMode}
-              className={`p-1.5 rounded transition-colors flex-shrink-0 touch-manipulation ${
-                selectMode
-                  ? 'bg-terminal-green/20 text-terminal-green'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-              }`}
-              title={selectMode ? 'Exit select mode' : 'Select files'}
-            >
-              <CheckSquare className="w-4 h-4" />
-            </button>
-            <a
-              href={getFolderZipUrl(projectId, currentPath)}
-              className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors flex-shrink-0 touch-manipulation"
-              title="Download folder as ZIP"
-            >
-              <Archive className="w-4 h-4" />
-            </a>
           </div>
         </div>
-      </div>
-
-      {/* File list */}
-      <div className="overflow-y-auto no-bounce" style={{ maxHeight: 'calc(100vh - 400px)', minHeight: '300px' }}>
-        {loading ? (
-          <div className="flex items-center justify-center p-8">
-            <Loader2 className="w-6 h-6 animate-spin text-terminal-green" />
-          </div>
-        ) : error ? (
-          <div className="p-4 text-red-400 text-sm">{error}</div>
-        ) : files.length === 0 ? (
-          <div className="p-4 text-slate-500 text-sm">Empty directory</div>
-        ) : (
-          <>
-            {/* Back button if not at root */}
-            {currentPath && (
+      ) : (
+        // Original compact layout (non-fullWidth)
+        <>
+          {/* Header with breadcrumb */}
+          <div className="border-b border-slate-800 p-3">
+            <div className="flex items-center gap-2 overflow-x-auto">
               <button
-                onClick={goBack}
-                className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800 transition-colors text-left touch-manipulation"
+                onClick={() => navigateTo('')}
+                className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors flex-shrink-0 touch-manipulation"
+                title="Root"
               >
-                <ArrowLeft className="w-4 h-4 text-slate-400" />
-                <span className="text-sm text-slate-400">..</span>
+                <Home className="w-4 h-4" />
               </button>
-            )}
 
-            {files.map((file) => {
-              const FileIcon = getFileIcon(file.extension, file.is_directory);
-              const isChecked = selectedPaths.has(file.path);
-
-              return (
-                <div
-                  key={file.path}
-                  className={`flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800 transition-colors group ${
-                    isChecked ? 'bg-slate-800' : ''
-                  }`}
-                >
-                  {/* Selection checkbox in select mode */}
-                  {selectMode && (
-                    <button
-                      onClick={(e) => toggleSelection(file.path, e)}
-                      className="flex-shrink-0 p-0.5 cursor-pointer"
-                    >
-                      {isChecked ? (
-                        <CheckSquare className="w-4 h-4 text-terminal-green" />
-                      ) : (
-                        <Square className="w-4 h-4 text-slate-500 hover:text-slate-300" />
-                      )}
-                    </button>
-                  )}
-                  {/* File/folder content */}
-                  <div
-                    className={`flex items-center gap-3 flex-1 min-w-0 ${file.is_directory ? 'cursor-pointer' : ''}`}
-                    onClick={() => handleFileClick(file)}
-                  >
-                    <FileIcon className={`w-4 h-4 flex-shrink-0 ${
-                      file.is_directory ? 'text-yellow-400' : file.extension === 'ipynb' ? 'text-orange-400' : 'text-slate-400'
-                    }`} />
-                    <span className="text-sm flex-1 truncate text-slate-300">
-                      {file.name}
-                    </span>
-                  </div>
-                  {!file.is_directory && (
-                    <>
-                      <span className="text-xs text-slate-500">
-                        {formatSize(file.size)}
-                      </span>
-                      {!selectMode && (
-                        <a
-                          href={getFileDownloadUrl(projectId, file.path)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="p-2 text-slate-500 hover:text-slate-200 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity touch-manipulation"
-                          title="Download"
+              {breadcrumbParts.length > 0 && (
+                <>
+                  <ChevronRight className="w-4 h-4 text-slate-600 flex-shrink-0" />
+                  {breadcrumbParts.map((part, index) => {
+                    const path = breadcrumbParts.slice(0, index + 1).join('/');
+                    const isLast = index === breadcrumbParts.length - 1;
+                    return (
+                      <div key={path} className="flex items-center gap-2 flex-shrink-0">
+                        <button
+                          onClick={() => !isLast && navigateTo(path)}
+                          className={`text-sm ${
+                            isLast
+                              ? 'text-slate-200 cursor-default'
+                              : 'text-slate-400 hover:text-slate-200'
+                          } touch-manipulation`}
                         >
-                          <Download className="w-3.5 h-3.5" />
-                        </a>
+                          {part}
+                        </button>
+                        {!isLast && <ChevronRight className="w-4 h-4 text-slate-600" />}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+
+              {/* Select mode and download buttons */}
+              <div className="ml-auto flex items-center gap-2">
+                {selectMode && selectedPaths.size > 0 && (
+                  <button
+                    onClick={handleBatchDownload}
+                    className="flex items-center gap-1.5 px-2 py-1 text-xs bg-terminal-green/20 text-terminal-green rounded hover:bg-terminal-green/30 transition-colors touch-manipulation"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download {selectedPaths.size} selected
+                  </button>
+                )}
+                <button
+                  onClick={toggleSelectMode}
+                  className={`p-1.5 rounded transition-colors flex-shrink-0 touch-manipulation ${
+                    selectMode
+                      ? 'bg-terminal-green/20 text-terminal-green'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                  title={selectMode ? 'Exit select mode' : 'Select files'}
+                >
+                  <CheckSquare className="w-4 h-4" />
+                </button>
+                <a
+                  href={getFolderZipUrl(projectId, currentPath)}
+                  className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors flex-shrink-0 touch-manipulation"
+                  title="Download folder as ZIP"
+                >
+                  <Archive className="w-4 h-4" />
+                </a>
+              </div>
+            </div>
+          </div>
+
+          {/* File list */}
+          <div className="overflow-y-auto no-bounce" style={{ maxHeight: 'calc(100vh - 400px)', minHeight: '300px' }}>
+            {loading ? (
+              <div className="flex items-center justify-center p-8">
+                <Loader2 className="w-6 h-6 animate-spin text-terminal-green" />
+              </div>
+            ) : error ? (
+              <div className="p-4 text-red-400 text-sm">{error}</div>
+            ) : files.length === 0 ? (
+              <div className="p-4 text-slate-500 text-sm">Empty directory</div>
+            ) : (
+              <>
+                {/* Back button if not at root */}
+                {currentPath && (
+                  <button
+                    onClick={goBack}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800 transition-colors text-left touch-manipulation"
+                  >
+                    <ArrowLeft className="w-4 h-4 text-slate-400" />
+                    <span className="text-sm text-slate-400">..</span>
+                  </button>
+                )}
+
+                {files.map((file) => {
+                  const FileIcon = getFileIcon(file.extension, file.is_directory);
+                  const isChecked = selectedPaths.has(file.path);
+
+                  return (
+                    <div
+                      key={file.path}
+                      className={`flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800 transition-colors group ${
+                        isChecked ? 'bg-slate-800' : ''
+                      }`}
+                    >
+                      {/* Selection checkbox in select mode */}
+                      {selectMode && (
+                        <button
+                          onClick={(e) => toggleSelection(file.path, e)}
+                          className="flex-shrink-0 p-0.5 cursor-pointer"
+                        >
+                          {isChecked ? (
+                            <CheckSquare className="w-4 h-4 text-terminal-green" />
+                          ) : (
+                            <Square className="w-4 h-4 text-slate-500 hover:text-slate-300" />
+                          )}
+                        </button>
                       )}
-                    </>
-                  )}
-                  {file.is_directory && !selectMode && (
-                    <ChevronRight className="w-4 h-4 text-slate-500" />
-                  )}
-                </div>
-              );
-            })}
-          </>
-        )}
-      </div>
+                      {/* File/folder content */}
+                      <div
+                        className={`flex items-center gap-3 flex-1 min-w-0 ${file.is_directory ? 'cursor-pointer' : ''}`}
+                        onClick={() => handleFileClick(file)}
+                      >
+                        <FileIcon className={`w-4 h-4 flex-shrink-0 ${
+                          file.is_directory ? 'text-yellow-400' : file.extension === 'ipynb' ? 'text-orange-400' : 'text-slate-400'
+                        }`} />
+                        <span className="text-sm flex-1 truncate text-slate-300">
+                          {file.name}
+                        </span>
+                      </div>
+                      {!file.is_directory && (
+                        <>
+                          <span className="text-xs text-slate-500">
+                            {formatSize(file.size)}
+                          </span>
+                          {!selectMode && (
+                            <a
+                              href={getFileDownloadUrl(projectId, file.path)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="p-2 text-slate-500 hover:text-slate-200 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity touch-manipulation"
+                              title="Download"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                        </>
+                      )}
+                      {file.is_directory && !selectMode && (
+                        <ChevronRight className="w-4 h-4 text-slate-500" />
+                      )}
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -1195,9 +1195,10 @@ async def start_jupyter_lab(
         }
 
     except FileNotFoundError:
+        # Return 404 with specific error code for frontend handling
         raise HTTPException(
-            status_code=500,
-            detail="Jupyter Lab not found. Please install it with: pip install jupyterlab"
+            status_code=404,
+            detail="JUPYTER_NOT_INSTALLED"
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error starting Jupyter Lab: {str(e)}")
@@ -1489,6 +1490,24 @@ def start_terminal():
     manager = get_process_manager()
     session_id = manager.create_terminal_session()
     return {"session_id": session_id}
+
+
+@app.get("/terminal/{session_id}/status")
+def get_terminal_status(session_id: int):
+    """
+    Check if a terminal session is still alive.
+    Returns session status and whether it can be reconnected.
+    """
+    manager = get_process_manager()
+    pty_session = manager.get_pty_session(session_id)
+
+    if not pty_session:
+        return {"alive": False, "message": "Session not found"}
+
+    if pty_session.is_alive():
+        return {"alive": True, "session_id": session_id}
+    else:
+        return {"alive": False, "message": "Session is no longer alive"}
 
 
 @app.websocket("/ws/terminal/{session_id}")

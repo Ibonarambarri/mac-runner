@@ -42,6 +42,7 @@ import {
   deleteJob,
   getCommandTemplates,
   runCommandTemplate,
+  runOneOffCommand,
   updateProject,
   listNotebooks,
   runNotebook,
@@ -132,6 +133,8 @@ function ProjectPage() {
   const [jupyterLoading, setJupyterLoading] = useState(false);
   const [notebooks, setNotebooks] = useState([]);
   const [runningNotebook, setRunningNotebook] = useState(false);
+  const [showJupyterInstallModal, setShowJupyterInstallModal] = useState(false);
+  const [installingJupyter, setInstallingJupyter] = useState(false);
 
   // Log streaming hook
   const { logs, isConnected, isComplete, error: wsError, clearLogs } = useLogStream(selectedJobId);
@@ -285,9 +288,29 @@ function ProjectPage() {
       // Open Jupyter in a new tab
       window.open(result.url, '_blank');
     } catch (e) {
-      setError(e.message);
+      // Check for JUPYTER_NOT_INSTALLED error
+      if (e.message === 'JUPYTER_NOT_INSTALLED') {
+        setShowJupyterInstallModal(true);
+      } else {
+        setError(e.message);
+      }
     } finally {
       setJupyterLoading(false);
+    }
+  };
+
+  const handleInstallJupyter = async () => {
+    setInstallingJupyter(true);
+    setShowJupyterInstallModal(false);
+    try {
+      const job = await runOneOffCommand(projectId, 'pip install jupyterlab');
+      setSelectedJobId(job.id);
+      clearLogs();
+      await fetchData();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setInstallingJupyter(false);
     }
   };
 
@@ -450,45 +473,47 @@ function ProjectPage() {
 
       {/* Main content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left column: Tabs + Content */}
-          <div className="space-y-6">
-            {/* Tab switcher */}
-            <div className="flex gap-2 flex-wrap">
-              <button
-                onClick={() => setActiveTab('actions')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors touch-manipulation ${
-                  activeTab === 'actions'
-                    ? 'bg-terminal-green/20 text-terminal-green'
-                    : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <Terminal className="w-4 h-4" />
-                Actions
-              </button>
-              <button
-                onClick={() => setActiveTab('files')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors touch-manipulation ${
-                  activeTab === 'files'
-                    ? 'bg-terminal-green/20 text-terminal-green'
-                    : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <FolderOpen className="w-4 h-4" />
-                Files
-              </button>
-              <button
-                onClick={() => setActiveTab('secrets')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors touch-manipulation ${
-                  activeTab === 'secrets'
-                    ? 'bg-yellow-500/20 text-yellow-400'
-                    : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <Key className="w-4 h-4" />
-                Secrets
-              </button>
-            </div>
+        {/* Tab switcher - always visible */}
+        <div className="flex gap-2 flex-wrap mb-6">
+          <button
+            onClick={() => setActiveTab('actions')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors touch-manipulation ${
+              activeTab === 'actions'
+                ? 'bg-terminal-green/20 text-terminal-green'
+                : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Terminal className="w-4 h-4" />
+            Actions
+          </button>
+          <button
+            onClick={() => setActiveTab('files')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors touch-manipulation ${
+              activeTab === 'files'
+                ? 'bg-terminal-green/20 text-terminal-green'
+                : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <FolderOpen className="w-4 h-4" />
+            Files
+          </button>
+          <button
+            onClick={() => setActiveTab('secrets')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors touch-manipulation ${
+              activeTab === 'secrets'
+                ? 'bg-yellow-500/20 text-yellow-400'
+                : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Key className="w-4 h-4" />
+            Secrets
+          </button>
+        </div>
+
+        {/* Conditional layout: Full width for files, 2-column for others */}
+        <div className={`grid gap-6 ${activeTab === 'files' ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2'}`}>
+          {/* Left column: Content */}
+          <div className={`space-y-6 ${activeTab === 'files' ? '' : ''}`}>
 
             {activeTab === 'actions' ? (
               <>
@@ -645,44 +670,46 @@ function ProjectPage() {
                 </section>
               </>
             ) : activeTab === 'files' ? (
-              /* Files Tab */
-              <>
+              /* Files Tab - Full width with split pane */
+              <div className="h-[calc(100vh-240px)]">
                 <TensorBoardWidget projectId={projectId} />
-                <FileExplorer projectId={projectId} />
-              </>
+                <FileExplorer projectId={projectId} fullWidth />
+              </div>
             ) : (
               /* Secrets Tab */
               <EnvEditor projectId={projectId} />
             )}
           </div>
 
-          {/* Right column: Log Viewer */}
-          <div className="lg:sticky lg:top-6 h-[calc(100vh-200px)]">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-slate-400">
-                {selectedJobId ? `Job #${selectedJobId}` : 'Output'}
-              </h2>
-              {selectedJobId && (
-                <button
-                  onClick={() => {
-                    setSelectedJobId(null);
-                    clearLogs();
-                  }}
-                  className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1"
-                >
-                  Clear
-                </button>
-              )}
+          {/* Right column: Log Viewer - HIDDEN when Files tab is active */}
+          {activeTab !== 'files' && (
+            <div className="lg:sticky lg:top-6 h-[calc(100vh-200px)]">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-slate-400">
+                  {selectedJobId ? `Job #${selectedJobId}` : 'Output'}
+                </h2>
+                {selectedJobId && (
+                  <button
+                    onClick={() => {
+                      setSelectedJobId(null);
+                      clearLogs();
+                    }}
+                    className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <div className="h-full">
+                <LogViewer
+                  logs={logs}
+                  isConnected={isConnected}
+                  isComplete={isComplete}
+                  error={wsError}
+                />
+              </div>
             </div>
-            <div className="h-full">
-              <LogViewer
-                logs={logs}
-                isConnected={isConnected}
-                isComplete={isComplete}
-                error={wsError}
-              />
-            </div>
-          </div>
+          )}
         </div>
       </main>
 
@@ -805,6 +832,57 @@ function ProjectPage() {
                 className="px-4 py-2 text-sm bg-terminal-green text-slate-950 font-semibold rounded-lg hover:bg-terminal-green/90 transition-colors disabled:opacity-50"
               >
                 {savingSettings ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Jupyter Install Modal */}
+      {showJupyterInstallModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 w-full max-w-md rounded-xl border border-slate-800 overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50">
+              <div className="flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-orange-400" />
+                <span className="font-semibold text-slate-100">Jupyter Lab Not Installed</span>
+              </div>
+              <button
+                onClick={() => setShowJupyterInstallModal(false)}
+                className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-4 space-y-4">
+              <p className="text-slate-300 text-sm">
+                Jupyter Lab is not installed in this project's environment. Would you like to install it now?
+              </p>
+              <div className="bg-slate-950 border border-slate-700 rounded-lg p-3">
+                <code className="text-sm text-orange-400 font-mono">pip install jupyterlab</code>
+              </div>
+              <p className="text-slate-500 text-xs">
+                This will run in the project's virtual environment and the output will appear in the log viewer.
+              </p>
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end gap-3 px-4 py-3 border-t border-slate-800 bg-slate-900/30">
+              <button
+                onClick={() => setShowJupyterInstallModal(false)}
+                className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleInstallJupyter}
+                disabled={installingJupyter}
+                className="px-4 py-2 text-sm bg-orange-500 text-white font-semibold rounded-lg hover:bg-orange-500/90 transition-colors disabled:opacity-50"
+              >
+                {installingJupyter ? 'Installing...' : 'Install Jupyter Lab'}
               </button>
             </div>
           </div>
