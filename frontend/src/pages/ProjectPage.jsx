@@ -20,6 +20,9 @@ import {
   X,
   Trash2,
   Key,
+  FileCode,
+  ExternalLink,
+  BookOpen,
 } from 'lucide-react';
 
 import { LogViewer } from '../components/LogViewer';
@@ -39,6 +42,11 @@ import {
   getCommandTemplates,
   runCommandTemplate,
   updateProject,
+  listNotebooks,
+  runNotebook,
+  startJupyter,
+  stopJupyter,
+  getJupyterStatus,
 } from '../api';
 
 /**
@@ -116,20 +124,29 @@ function ProjectPage() {
   const [editRunEnabled, setEditRunEnabled] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
 
+  // Jupyter state
+  const [jupyterStatus, setJupyterStatus] = useState({ running: false });
+  const [jupyterLoading, setJupyterLoading] = useState(false);
+  const [notebooks, setNotebooks] = useState([]);
+  const [showNotebookModal, setShowNotebookModal] = useState(false);
+  const [runningNotebook, setRunningNotebook] = useState(false);
+
   // Log streaming hook
   const { logs, isConnected, isComplete, error: wsError, clearLogs } = useLogStream(selectedJobId);
 
   // Fetch project data
   const fetchData = useCallback(async () => {
     try {
-      const [projectData, jobsData, commandsData] = await Promise.all([
+      const [projectData, jobsData, commandsData, jupStatus] = await Promise.all([
         getProject(projectId),
         getProjectJobs(projectId),
         getCommandTemplates(projectId),
+        getJupyterStatus(projectId).catch(() => ({ running: false })),
       ]);
       setProject(projectData);
       setJobs(jobsData);
       setCommands(commandsData);
+      setJupyterStatus(jupStatus);
       setError(null);
     } catch (e) {
       setError(e.message);
@@ -246,6 +263,59 @@ function ProjectPage() {
     }
   };
 
+  // Jupyter handlers
+  const handleLaunchJupyter = async () => {
+    setJupyterLoading(true);
+    try {
+      const result = await startJupyter(projectId);
+      setJupyterStatus({ running: true, url: result.url, port: result.port });
+      // Open Jupyter in a new tab
+      window.open(result.url, '_blank');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setJupyterLoading(false);
+    }
+  };
+
+  const handleStopJupyter = async () => {
+    setJupyterLoading(true);
+    try {
+      await stopJupyter(projectId);
+      setJupyterStatus({ running: false });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setJupyterLoading(false);
+    }
+  };
+
+  // Notebook handlers
+  const handleOpenNotebookModal = async () => {
+    try {
+      const result = await listNotebooks(projectId);
+      setNotebooks(result.notebooks || []);
+      setShowNotebookModal(true);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleRunNotebook = async (notebookPath) => {
+    setRunningNotebook(true);
+    try {
+      const job = await runNotebook(projectId, notebookPath);
+      setSelectedJobId(job.id);
+      clearLogs();
+      setShowNotebookModal(false);
+      await fetchData();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRunningNotebook(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center">
@@ -295,6 +365,46 @@ function ProjectPage() {
                 <GitBranch className="w-3.5 h-3.5 flex-shrink-0" />
                 <span className="truncate">{project.repo_url}</span>
               </div>
+            </div>
+
+            {/* Jupyter Launch Button */}
+            <div className="flex items-center gap-2">
+              {jupyterStatus.running ? (
+                <div className="flex items-center gap-2">
+                  <a
+                    href={jupyterStatus.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500/20 text-orange-400 text-sm rounded-lg hover:bg-orange-500/30 transition-colors"
+                  >
+                    <BookOpen className="w-4 h-4" />
+                    <span className="hidden sm:inline">Jupyter</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                  <button
+                    onClick={handleStopJupyter}
+                    disabled={jupyterLoading}
+                    className="p-1.5 text-orange-400 hover:bg-orange-500/20 rounded-lg transition-colors disabled:opacity-50"
+                    title="Stop Jupyter"
+                  >
+                    <Square className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={handleLaunchJupyter}
+                  disabled={jupyterLoading || isCloning}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500/20 text-orange-400 text-sm rounded-lg hover:bg-orange-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Launch Jupyter Lab"
+                >
+                  {jupyterLoading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <BookOpen className="w-4 h-4" />
+                  )}
+                  <span className="hidden sm:inline">Jupyter</span>
+                </button>
+              )}
             </div>
 
             {/* Status badge */}
@@ -415,6 +525,14 @@ function ProjectPage() {
                         >
                           <GitPullRequest className="w-4 h-4" />
                           Pull
+                        </button>
+                        <button
+                          onClick={handleOpenNotebookModal}
+                          disabled={isCloning}
+                          className="flex items-center gap-2 px-4 py-2.5 bg-orange-500/20 text-orange-400 rounded-lg hover:bg-orange-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                        >
+                          <FileCode className="w-4 h-4" />
+                          Run Notebook
                         </button>
                       </>
                     )}
@@ -626,6 +744,74 @@ function ProjectPage() {
                 className="px-4 py-2 text-sm bg-terminal-green text-slate-950 font-semibold rounded-lg hover:bg-terminal-green/90 transition-colors disabled:opacity-50"
               >
                 {savingSettings ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Run Notebook Modal */}
+      {showNotebookModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 w-full max-w-lg rounded-xl border border-slate-800 overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50">
+              <div className="flex items-center gap-2">
+                <FileCode className="w-5 h-5 text-orange-400" />
+                <span className="font-semibold text-slate-100">Run Notebook</span>
+              </div>
+              <button
+                onClick={() => setShowNotebookModal(false)}
+                className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-4">
+              <p className="text-sm text-slate-400 mb-4">
+                Select a notebook to run with Papermill. The output will be saved for later inspection.
+              </p>
+
+              {notebooks.length === 0 ? (
+                <div className="text-center py-8 text-slate-500">
+                  <FileCode className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p>No notebooks found in this project.</p>
+                  <p className="text-sm mt-1">Add .ipynb files to run them here.</p>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {notebooks.map((nb) => (
+                    <button
+                      key={nb.path}
+                      onClick={() => handleRunNotebook(nb.path)}
+                      disabled={runningNotebook || isRunning}
+                      className="w-full flex items-center gap-3 p-3 bg-slate-800/50 hover:bg-slate-800 rounded-lg transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <FileCode className="w-5 h-5 text-orange-400 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-slate-200 truncate">{nb.name}</div>
+                        <div className="text-xs text-slate-500 truncate">{nb.path}</div>
+                      </div>
+                      {runningNotebook ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-orange-400 flex-shrink-0" />
+                      ) : (
+                        <Play className="w-4 h-4 text-orange-400 flex-shrink-0" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end px-4 py-3 border-t border-slate-800 bg-slate-900/30">
+              <button
+                onClick={() => setShowNotebookModal(false)}
+                className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+              >
+                Cancel
               </button>
             </div>
           </div>

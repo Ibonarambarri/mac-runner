@@ -718,6 +718,169 @@ class ProcessManager:
             # Cleanup
             self.running_processes.pop(job.id, None)
 
+    async def run_notebook(
+        self,
+        project: Project,
+        job: Job,
+        notebook_path: str,
+        parameters: dict,
+        session: Session
+    ) -> None:
+        """
+        Execute a Jupyter notebook using Papermill.
+
+        Args:
+            project: Project with workspace configuration
+            job: Job to track execution
+            notebook_path: Relative path to the input notebook
+            parameters: Parameters to inject into the notebook
+            session: Database session
+        """
+        workspace = Path(project.workspace_path)
+        log_path = self.get_job_log_path(job.id)
+
+        # Input and output notebook paths
+        input_nb = workspace / notebook_path
+        output_dir = self.logs_path / "notebooks"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_nb = output_dir / f"notebook_output_{job.id}.ipynb"
+
+        # Update job status
+        job.status = JobStatus.RUNNING
+        job.log_path = str(log_path)
+        project.status = ProjectStatus.RUNNING
+        session.add(job)
+        session.add(project)
+        session.commit()
+
+        # Build environment with venv if available
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+
+        venv_path = workspace / "venv"
+        if venv_path.exists():
+            venv_bin = venv_path / "bin"
+            env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
+            env["VIRTUAL_ENV"] = str(venv_path)
+            papermill_cmd = str(venv_bin / "papermill")
+            # Fall back to system papermill if not in venv
+            if not Path(papermill_cmd).exists():
+                papermill_cmd = "papermill"
+        else:
+            papermill_cmd = "papermill"
+
+        # Build command
+        cmd = [
+            papermill_cmd,
+            str(input_nb),
+            str(output_nb),
+            f"--cwd={workspace}",
+            "--progress-bar"
+        ]
+
+        # Add parameters if any
+        for key, value in parameters.items():
+            import json
+            cmd.extend(["-p", key, json.dumps(value)])
+
+        try:
+            # Open log file for writing
+            with open(log_path, "w") as log_file:
+                # Write header
+                header = f"$ papermill {notebook_path}\n{'='*50}\n"
+                header += f"Input:  {input_nb}\n"
+                header += f"Output: {output_nb}\n"
+                header += f"{'='*50}\n\n"
+                log_file.write(header)
+                for queue in self.log_queues[job.id]:
+                    await queue.put(header)
+
+                # Execute papermill
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    cwd=workspace,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=env
+                )
+
+                # Store process for potential stopping
+                self.running_processes[job.id] = process
+                job.pid = process.pid
+                session.add(job)
+                session.commit()
+
+                # Process stdout and stderr concurrently
+                async def read_stream(stream, prefix=""):
+                    """Read stream line by line and broadcast to queues."""
+                    while True:
+                        line = await stream.readline()
+                        if not line:
+                            break
+
+                        decoded_line = line.decode("utf-8", errors="replace")
+                        formatted_line = f"{prefix}{decoded_line}"
+
+                        # Write to log file
+                        log_file.write(formatted_line)
+                        log_file.flush()
+
+                        # Broadcast to all connected WebSocket queues
+                        for queue in self.log_queues[job.id]:
+                            await queue.put(formatted_line)
+
+                # Run both stream readers concurrently
+                await asyncio.gather(
+                    read_stream(process.stdout),
+                    read_stream(process.stderr, prefix="[stderr] ")
+                )
+
+                # Wait for process to complete
+                return_code = await process.wait()
+
+                # Final status message
+                end_msg = f"\n{'='*50}\n"
+                if return_code == 0:
+                    end_msg += f"Notebook execution completed successfully!\n"
+                    end_msg += f"Output saved to: {output_nb}\n"
+                else:
+                    end_msg += f"Notebook execution failed with exit code: {return_code}\n"
+                log_file.write(end_msg)
+                for queue in self.log_queues[job.id]:
+                    await queue.put(end_msg)
+                    await queue.put(None)  # Signal end of stream
+
+            # Update final status
+            job.status = JobStatus.COMPLETED if return_code == 0 else JobStatus.FAILED
+            job.end_time = datetime.now(timezone.utc)
+            project.status = ProjectStatus.IDLE
+            session.add(job)
+            session.add(project)
+            session.commit()
+
+        except Exception as e:
+            error_msg = f"\n[ERROR] {str(e)}\n"
+
+            # Write error to log
+            with open(log_path, "a") as log_file:
+                log_file.write(error_msg)
+
+            # Broadcast error
+            for queue in self.log_queues[job.id]:
+                await queue.put(error_msg)
+                await queue.put(None)
+
+            job.status = JobStatus.FAILED
+            job.end_time = datetime.now(timezone.utc)
+            project.status = ProjectStatus.ERROR
+            session.add(job)
+            session.add(project)
+            session.commit()
+
+        finally:
+            # Cleanup
+            self.running_processes.pop(job.id, None)
+
     def validate_path(self, workspace: Path, relative_path: str, allow_external: bool = False) -> Path:
         """
         Validate and resolve a path, optionally allowing access outside workspace.

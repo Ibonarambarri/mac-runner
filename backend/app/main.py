@@ -893,6 +893,375 @@ def download_batch_files(
 
 
 # ============================================================================
+# JUPYTER NOTEBOOK ENDPOINTS
+# ============================================================================
+
+# Track running Jupyter Lab processes
+jupyter_processes: dict = {}
+
+
+@app.get("/projects/{project_id}/notebook/render")
+async def render_notebook(
+    project_id: int,
+    path: str,
+    session: Session = Depends(get_session)
+):
+    """
+    Render a Jupyter notebook as HTML for preview.
+
+    Args:
+        project_id: Project ID
+        path: Relative path to the .ipynb file
+    """
+    from nbconvert import HTMLExporter
+    import nbformat
+
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.workspace_path:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
+    manager = get_process_manager()
+    workspace = Path(project.workspace_path)
+
+    try:
+        notebook_path = manager.validate_path(workspace, path)
+
+        if not notebook_path.exists():
+            raise HTTPException(status_code=404, detail="Notebook not found")
+
+        if not notebook_path.suffix.lower() == '.ipynb':
+            raise HTTPException(status_code=400, detail="File is not a Jupyter notebook")
+
+        # Read and convert notebook
+        with open(notebook_path, 'r', encoding='utf-8') as f:
+            notebook_content = nbformat.read(f, as_version=4)
+
+        # Configure HTML exporter
+        html_exporter = HTMLExporter()
+        html_exporter.template_name = 'classic'
+        html_exporter.exclude_input_prompt = False
+        html_exporter.exclude_output_prompt = False
+
+        # Convert to HTML
+        (body, resources) = html_exporter.from_notebook_node(notebook_content)
+
+        return {
+            "html": body,
+            "notebook_name": notebook_path.name
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error rendering notebook: {str(e)}")
+
+
+@app.get("/projects/{project_id}/notebooks")
+def list_notebooks(
+    project_id: int,
+    session: Session = Depends(get_session)
+):
+    """
+    List all Jupyter notebooks in a project.
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.workspace_path:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
+    workspace = Path(project.workspace_path)
+    notebooks = []
+
+    # Find all .ipynb files, excluding checkpoints
+    for nb_path in workspace.rglob("*.ipynb"):
+        # Skip checkpoint files
+        if ".ipynb_checkpoints" in str(nb_path):
+            continue
+
+        rel_path = nb_path.relative_to(workspace)
+        notebooks.append({
+            "name": nb_path.name,
+            "path": str(rel_path),
+            "size": nb_path.stat().st_size,
+            "modified": nb_path.stat().st_mtime
+        })
+
+    # Sort by path
+    notebooks.sort(key=lambda x: x["path"])
+
+    return {"notebooks": notebooks}
+
+
+class RunNotebookRequest(BaseModel):
+    """Request body for running a notebook."""
+    notebook_path: str
+    parameters: dict = {}
+
+
+@app.post("/projects/{project_id}/notebook/run", response_model=JobRead)
+async def run_notebook(
+    project_id: int,
+    request: RunNotebookRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session)
+):
+    """
+    Execute a Jupyter notebook using Papermill.
+
+    Args:
+        project_id: Project ID
+        notebook_path: Relative path to the input notebook
+        parameters: Optional parameters to inject into the notebook
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project.status == ProjectStatus.RUNNING:
+        raise HTTPException(status_code=400, detail="Project is already running")
+
+    if not project.workspace_path:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
+    workspace = Path(project.workspace_path)
+    manager = get_process_manager()
+
+    try:
+        notebook_path = manager.validate_path(workspace, request.notebook_path)
+        if not notebook_path.exists():
+            raise HTTPException(status_code=404, detail="Notebook not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Create job for notebook execution
+    job = Job(
+        project_id=project_id,
+        status=JobStatus.PENDING,
+        command_name="notebook",
+        command_executed=f"papermill {request.notebook_path}"
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    # Run notebook in background
+    async def run_notebook_task():
+        await broadcast_status_update("job_started", {
+            "job_id": job.id,
+            "project_id": project_id,
+            "project_name": project.name,
+            "command_name": "notebook"
+        })
+
+        with Session(engine) as bg_session:
+            proj = bg_session.get(Project, project_id)
+            j = bg_session.get(Job, job.id)
+            manager = get_process_manager()
+            await manager.run_notebook(proj, j, request.notebook_path, request.parameters, bg_session)
+
+            j_updated = bg_session.get(Job, job.id)
+            await broadcast_status_update("job_finished", {
+                "job_id": job.id,
+                "project_id": project_id,
+                "status": j_updated.status.value if j_updated else "unknown"
+            })
+
+    background_tasks.add_task(run_notebook_task)
+
+    return job
+
+
+def find_free_port(start: int = 8888, end: int = 8920) -> int:
+    """Find a free port in the given range."""
+    import socket
+    for port in range(start, end):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(('', port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"No free port found in range {start}-{end}")
+
+
+@app.post("/projects/{project_id}/jupyter/start")
+async def start_jupyter_lab(
+    project_id: int,
+    session: Session = Depends(get_session)
+):
+    """
+    Start a Jupyter Lab server for a project.
+
+    Returns the URL to access Jupyter Lab.
+    """
+    import subprocess
+    import secrets
+
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.workspace_path:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
+    workspace = Path(project.workspace_path)
+
+    # Check if already running for this project
+    if project_id in jupyter_processes:
+        proc_info = jupyter_processes[project_id]
+        proc = proc_info["process"]
+        if proc.poll() is None:  # Still running
+            return {
+                "status": "already_running",
+                "url": proc_info["url"],
+                "port": proc_info["port"]
+            }
+        else:
+            # Process died, clean up
+            del jupyter_processes[project_id]
+
+    # Find a free port
+    try:
+        port = find_free_port()
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    # Generate a token for authentication
+    token = secrets.token_urlsafe(32)
+
+    # Get the venv python path if it exists
+    venv_path = workspace / "venv"
+    if venv_path.exists():
+        jupyter_cmd = str(venv_path / "bin" / "jupyter")
+        # Check if jupyter exists in venv
+        if not Path(jupyter_cmd).exists():
+            # Fall back to system jupyter
+            jupyter_cmd = "jupyter"
+    else:
+        jupyter_cmd = "jupyter"
+
+    # Start Jupyter Lab
+    cmd = [
+        jupyter_cmd, "lab",
+        f"--port={port}",
+        "--ip=0.0.0.0",
+        f"--notebook-dir={workspace}",
+        f"--IdentityProvider.token={token}",
+        "--no-browser",
+        "--ServerApp.allow_origin=*",
+        "--ServerApp.disable_check_xsrf=True"
+    ]
+
+    try:
+        process = subprocess.Popen(
+            cmd,
+            cwd=workspace,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True
+        )
+
+        # Wait a moment to check if it started
+        import time
+        time.sleep(2)
+
+        if process.poll() is not None:
+            # Process exited, get error
+            stderr = process.stderr.read().decode() if process.stderr else "Unknown error"
+            raise HTTPException(status_code=500, detail=f"Jupyter Lab failed to start: {stderr}")
+
+        # Build the URL
+        import socket
+        hostname = socket.gethostname()
+        url = f"http://{hostname}:{port}/lab?token={token}"
+
+        # Store process info
+        jupyter_processes[project_id] = {
+            "process": process,
+            "port": port,
+            "token": token,
+            "url": url
+        }
+
+        return {
+            "status": "started",
+            "url": url,
+            "port": port
+        }
+
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=500,
+            detail="Jupyter Lab not found. Please install it with: pip install jupyterlab"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error starting Jupyter Lab: {str(e)}")
+
+
+@app.post("/projects/{project_id}/jupyter/stop")
+async def stop_jupyter_lab(
+    project_id: int,
+    session: Session = Depends(get_session)
+):
+    """
+    Stop the Jupyter Lab server for a project.
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project_id not in jupyter_processes:
+        return {"status": "not_running"}
+
+    proc_info = jupyter_processes[project_id]
+    proc = proc_info["process"]
+
+    if proc.poll() is None:  # Still running
+        import os
+        import signal
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+
+    del jupyter_processes[project_id]
+
+    return {"status": "stopped"}
+
+
+@app.get("/projects/{project_id}/jupyter/status")
+def get_jupyter_status(
+    project_id: int,
+    session: Session = Depends(get_session)
+):
+    """
+    Get the status of Jupyter Lab for a project.
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project_id not in jupyter_processes:
+        return {"running": False}
+
+    proc_info = jupyter_processes[project_id]
+    proc = proc_info["process"]
+
+    if proc.poll() is None:  # Still running
+        return {
+            "running": True,
+            "url": proc_info["url"],
+            "port": proc_info["port"]
+        }
+    else:
+        # Process died, clean up
+        del jupyter_processes[project_id]
+        return {"running": False}
+
+
+# ============================================================================
 # TENSORBOARD ENDPOINTS
 # ============================================================================
 

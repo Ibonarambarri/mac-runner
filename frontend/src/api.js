@@ -252,6 +252,59 @@ export function getBatchDownloadUrl(projectId, paths) {
 }
 
 // ============================================================================
+// JUPYTER NOTEBOOK API
+// ============================================================================
+
+/**
+ * Render a Jupyter notebook as HTML
+ */
+export async function renderNotebook(projectId, path) {
+  return apiFetch(`/projects/${projectId}/notebook/render?path=${encodeURIComponent(path)}`);
+}
+
+/**
+ * List all notebooks in a project
+ */
+export async function listNotebooks(projectId) {
+  return apiFetch(`/projects/${projectId}/notebooks`);
+}
+
+/**
+ * Run a notebook using Papermill
+ */
+export async function runNotebook(projectId, notebookPath, parameters = {}) {
+  return apiFetch(`/projects/${projectId}/notebook/run`, {
+    method: 'POST',
+    body: JSON.stringify({ notebook_path: notebookPath, parameters }),
+  });
+}
+
+/**
+ * Start Jupyter Lab for a project
+ */
+export async function startJupyter(projectId) {
+  return apiFetch(`/projects/${projectId}/jupyter/start`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Stop Jupyter Lab for a project
+ */
+export async function stopJupyter(projectId) {
+  return apiFetch(`/projects/${projectId}/jupyter/stop`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Get Jupyter Lab status for a project
+ */
+export async function getJupyterStatus(projectId) {
+  return apiFetch(`/projects/${projectId}/jupyter/status`);
+}
+
+// ============================================================================
 // TERMINAL API
 // ============================================================================
 

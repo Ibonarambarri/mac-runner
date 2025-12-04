@@ -15,7 +15,7 @@ import {
   CheckSquare,
   Square,
 } from 'lucide-react';
-import { listFiles, getFileContent, getFileDownloadUrl, getFolderZipUrl, getBatchDownloadUrl } from '../api';
+import { listFiles, getFileContent, getFileDownloadUrl, getFolderZipUrl, getBatchDownloadUrl, renderNotebook } from '../api';
 
 /**
  * Get icon component based on file extension
@@ -56,6 +56,7 @@ export function FileExplorer({ projectId }) {
   const [error, setError] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const [fileContent, setFileContent] = useState(null);
+  const [notebookHtml, setNotebookHtml] = useState(null);
   const [loadingContent, setLoadingContent] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
 
@@ -133,6 +134,22 @@ export function FileExplorer({ projectId }) {
     } else {
       setSelectedFile(file);
       setShowPreview(true);
+      setFileContent(null);
+      setNotebookHtml(null);
+
+      // Check if it's a Jupyter notebook
+      if (file.extension?.toLowerCase() === 'ipynb') {
+        setLoadingContent(true);
+        try {
+          const result = await renderNotebook(projectId, file.path);
+          setNotebookHtml(result.html);
+        } catch (e) {
+          setFileContent(`Error rendering notebook: ${e.message}`);
+        } finally {
+          setLoadingContent(false);
+        }
+        return;
+      }
 
       // Try to load content for text files
       const textExtensions = ['txt', 'md', 'json', 'yml', 'yaml', 'xml', 'html', 'css', 'scss', 'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'rb', 'php', 'sh', 'bash', 'zsh'];
@@ -146,8 +163,6 @@ export function FileExplorer({ projectId }) {
         } finally {
           setLoadingContent(false);
         }
-      } else {
-        setFileContent(null);
       }
     }
   };
@@ -335,6 +350,7 @@ export function FileExplorer({ projectId }) {
                     setShowPreview(false);
                     setSelectedFile(null);
                     setFileContent(null);
+                    setNotebookHtml(null);
                   }}
                   className="p-1 text-slate-400 hover:text-slate-200 transition-colors lg:hidden touch-manipulation"
                 >
@@ -342,17 +358,24 @@ export function FileExplorer({ projectId }) {
                 </button>
               </div>
             </div>
-            <div className="p-4 max-h-80 overflow-auto">
+            <div className={`${notebookHtml ? 'p-0' : 'p-4'} max-h-[500px] overflow-auto`}>
               {loadingContent ? (
-                <div className="flex items-center justify-center">
+                <div className="flex items-center justify-center p-4">
                   <Loader2 className="w-5 h-5 animate-spin text-terminal-green" />
                 </div>
+              ) : notebookHtml ? (
+                <iframe
+                  srcDoc={notebookHtml}
+                  title="Notebook Preview"
+                  className="w-full h-[480px] bg-white rounded"
+                  sandbox="allow-scripts allow-same-origin"
+                />
               ) : fileContent !== null ? (
                 <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap break-all">
                   {fileContent}
                 </pre>
               ) : (
-                <div className="text-sm text-slate-500">
+                <div className="text-sm text-slate-500 p-4">
                   Binary file - click download to view
                 </div>
               )}
