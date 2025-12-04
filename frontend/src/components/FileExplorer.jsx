@@ -11,11 +11,10 @@ import {
   ArrowLeft,
   Loader2,
   Home,
-  X,
   CheckSquare,
   Square,
 } from 'lucide-react';
-import { listFiles, getFileContent, getFileDownloadUrl, getFolderZipUrl, getBatchDownloadUrl, renderNotebook } from '../api';
+import { listFiles, getFileDownloadUrl, getFolderZipUrl, getBatchDownloadUrl } from '../api';
 
 /**
  * Get icon component based on file extension
@@ -23,7 +22,7 @@ import { listFiles, getFileContent, getFileDownloadUrl, getFolderZipUrl, getBatc
 function getFileIcon(extension, isDirectory) {
   if (isDirectory) return Folder;
 
-  const codeExtensions = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'go', 'rs', 'rb', 'php'];
+  const codeExtensions = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'go', 'rs', 'rb', 'php', 'ipynb'];
   const textExtensions = ['txt', 'md', 'json', 'yml', 'yaml', 'xml', 'html', 'css', 'scss'];
   const imageExtensions = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'webp'];
 
@@ -47,18 +46,13 @@ function formatSize(bytes) {
 /**
  * FileExplorer Component
  *
- * Tree-style file browser with navigation, preview, and download.
+ * Tree-style file browser with navigation and download.
  */
 export function FileExplorer({ projectId }) {
   const [currentPath, setCurrentPath] = useState('');
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [fileContent, setFileContent] = useState(null);
-  const [notebookHtml, setNotebookHtml] = useState(null);
-  const [loadingContent, setLoadingContent] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
 
   // Multi-select state
   const [selectMode, setSelectMode] = useState(false);
@@ -82,13 +76,9 @@ export function FileExplorer({ projectId }) {
     fetchFiles();
   }, [fetchFiles]);
 
-  // Navigate to a directory (preserve selections when navigating)
+  // Navigate to a directory
   const navigateTo = (path) => {
     setCurrentPath(path);
-    setSelectedFile(null);
-    setFileContent(null);
-    setShowPreview(false);
-    // Don't clear selections when navigating - user may want to select from multiple folders
   };
 
   // Toggle select mode
@@ -127,51 +117,19 @@ export function FileExplorer({ projectId }) {
     navigateTo(parts.join('/'));
   };
 
-  // Handle file click
-  const handleFileClick = async (file) => {
+  // Handle file/folder click
+  const handleFileClick = (file) => {
     if (file.is_directory) {
       navigateTo(file.path);
-    } else {
-      setSelectedFile(file);
-      setShowPreview(true);
-      setFileContent(null);
-      setNotebookHtml(null);
-
-      // Check if it's a Jupyter notebook
-      if (file.extension?.toLowerCase() === 'ipynb') {
-        setLoadingContent(true);
-        try {
-          const result = await renderNotebook(projectId, file.path);
-          setNotebookHtml(result.html);
-        } catch (e) {
-          setFileContent(`Error rendering notebook: ${e.message}`);
-        } finally {
-          setLoadingContent(false);
-        }
-        return;
-      }
-
-      // Try to load content for text files
-      const textExtensions = ['txt', 'md', 'json', 'yml', 'yaml', 'xml', 'html', 'css', 'scss', 'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'rb', 'php', 'sh', 'bash', 'zsh'];
-      if (textExtensions.includes(file.extension?.toLowerCase())) {
-        setLoadingContent(true);
-        try {
-          const content = await getFileContent(projectId, file.path);
-          setFileContent(content);
-        } catch (e) {
-          setFileContent(`Error loading file: ${e.message}`);
-        } finally {
-          setLoadingContent(false);
-        }
-      }
     }
+    // For files, do nothing - user can download via button
   };
 
   // Build breadcrumb parts
   const breadcrumbParts = currentPath ? currentPath.split('/').filter(Boolean) : [];
 
   return (
-    <div className="bg-slate-900/50 border border-slate-800 rounded-lg overflow-hidden">
+    <div className="bg-slate-900/50 border border-slate-800 rounded-lg overflow-hidden h-full">
       {/* Header with breadcrumb */}
       <div className="border-b border-slate-800 p-3">
         <div className="flex items-center gap-2 overflow-x-auto">
@@ -241,146 +199,89 @@ export function FileExplorer({ projectId }) {
         </div>
       </div>
 
-      {/* Content */}
-      <div className="flex flex-col lg:flex-row">
-        {/* File list */}
-        <div className={`${showPreview ? 'lg:w-1/2' : 'w-full'} border-r border-slate-800`}>
-          {loading ? (
-            <div className="flex items-center justify-center p-8">
-              <Loader2 className="w-6 h-6 animate-spin text-terminal-green" />
-            </div>
-          ) : error ? (
-            <div className="p-4 text-red-400 text-sm">{error}</div>
-          ) : files.length === 0 ? (
-            <div className="p-4 text-slate-500 text-sm">Empty directory</div>
-          ) : (
-            <div className="max-h-80 overflow-y-auto">
-              {/* Back button if not at root */}
-              {currentPath && (
-                <button
-                  onClick={goBack}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800 transition-colors text-left touch-manipulation"
-                >
-                  <ArrowLeft className="w-4 h-4 text-slate-400" />
-                  <span className="text-sm text-slate-400">..</span>
-                </button>
-              )}
-
-              {files.map((file) => {
-                const FileIcon = getFileIcon(file.extension, file.is_directory);
-                const isSelected = selectedFile?.path === file.path;
-                const isChecked = selectedPaths.has(file.path);
-
-                return (
-                  <div
-                    key={file.path}
-                    className={`flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800 transition-colors group ${
-                      isSelected ? 'bg-terminal-green/10' : ''
-                    } ${isChecked ? 'bg-slate-800' : ''}`}
-                  >
-                    {/* Selection checkbox in select mode - only this is clickable for selection */}
-                    {selectMode && (
-                      <button
-                        onClick={(e) => toggleSelection(file.path, e)}
-                        className="flex-shrink-0 p-0.5 cursor-pointer"
-                      >
-                        {isChecked ? (
-                          <CheckSquare className="w-4 h-4 text-terminal-green" />
-                        ) : (
-                          <Square className="w-4 h-4 text-slate-500 hover:text-slate-300" />
-                        )}
-                      </button>
-                    )}
-                    {/* File/folder content - always clickable for navigation/preview */}
-                    <div
-                      className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer"
-                      onClick={() => handleFileClick(file)}
-                    >
-                      <FileIcon className={`w-4 h-4 flex-shrink-0 ${
-                        file.is_directory ? 'text-yellow-400' : 'text-slate-400'
-                      }`} />
-                      <span className={`text-sm flex-1 truncate ${
-                        isSelected ? 'text-terminal-green' : 'text-slate-300'
-                      }`}>
-                        {file.name}
-                      </span>
-                    </div>
-                    {!file.is_directory && (
-                      <>
-                        <span className="text-xs text-slate-500">
-                          {formatSize(file.size)}
-                        </span>
-                        {!selectMode && (
-                          <a
-                            href={getFileDownloadUrl(projectId, file.path)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="p-1 text-slate-500 hover:text-slate-200 opacity-0 group-hover:opacity-100 transition-opacity touch-manipulation"
-                            title="Download"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                          </a>
-                        )}
-                      </>
-                    )}
-                    {file.is_directory && !selectMode && (
-                      <ChevronRight className="w-4 h-4 text-slate-500" />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* File preview panel */}
-        {showPreview && selectedFile && (
-          <div className="lg:w-1/2 border-t lg:border-t-0 border-slate-800">
-            <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-900/30">
-              <span className="text-sm text-slate-300 truncate">{selectedFile.name}</span>
-              <div className="flex items-center gap-2">
-                <a
-                  href={getFileDownloadUrl(projectId, selectedFile.path)}
-                  className="p-1 text-slate-400 hover:text-slate-200 transition-colors touch-manipulation"
-                  title="Download"
-                >
-                  <Download className="w-4 h-4" />
-                </a>
-                <button
-                  onClick={() => {
-                    setShowPreview(false);
-                    setSelectedFile(null);
-                    setFileContent(null);
-                    setNotebookHtml(null);
-                  }}
-                  className="p-1 text-slate-400 hover:text-slate-200 transition-colors lg:hidden touch-manipulation"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-            <div className={`${notebookHtml ? 'p-0' : 'p-4'} max-h-[500px] overflow-auto`}>
-              {loadingContent ? (
-                <div className="flex items-center justify-center p-4">
-                  <Loader2 className="w-5 h-5 animate-spin text-terminal-green" />
-                </div>
-              ) : notebookHtml ? (
-                <iframe
-                  srcDoc={notebookHtml}
-                  title="Notebook Preview"
-                  className="w-full h-[480px] bg-white rounded"
-                  sandbox="allow-scripts allow-same-origin"
-                />
-              ) : fileContent !== null ? (
-                <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap break-all">
-                  {fileContent}
-                </pre>
-              ) : (
-                <div className="text-sm text-slate-500 p-4">
-                  Binary file - click download to view
-                </div>
-              )}
-            </div>
+      {/* File list */}
+      <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 400px)', minHeight: '300px' }}>
+        {loading ? (
+          <div className="flex items-center justify-center p-8">
+            <Loader2 className="w-6 h-6 animate-spin text-terminal-green" />
           </div>
+        ) : error ? (
+          <div className="p-4 text-red-400 text-sm">{error}</div>
+        ) : files.length === 0 ? (
+          <div className="p-4 text-slate-500 text-sm">Empty directory</div>
+        ) : (
+          <>
+            {/* Back button if not at root */}
+            {currentPath && (
+              <button
+                onClick={goBack}
+                className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800 transition-colors text-left touch-manipulation"
+              >
+                <ArrowLeft className="w-4 h-4 text-slate-400" />
+                <span className="text-sm text-slate-400">..</span>
+              </button>
+            )}
+
+            {files.map((file) => {
+              const FileIcon = getFileIcon(file.extension, file.is_directory);
+              const isChecked = selectedPaths.has(file.path);
+
+              return (
+                <div
+                  key={file.path}
+                  className={`flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800 transition-colors group ${
+                    isChecked ? 'bg-slate-800' : ''
+                  }`}
+                >
+                  {/* Selection checkbox in select mode */}
+                  {selectMode && (
+                    <button
+                      onClick={(e) => toggleSelection(file.path, e)}
+                      className="flex-shrink-0 p-0.5 cursor-pointer"
+                    >
+                      {isChecked ? (
+                        <CheckSquare className="w-4 h-4 text-terminal-green" />
+                      ) : (
+                        <Square className="w-4 h-4 text-slate-500 hover:text-slate-300" />
+                      )}
+                    </button>
+                  )}
+                  {/* File/folder content */}
+                  <div
+                    className={`flex items-center gap-3 flex-1 min-w-0 ${file.is_directory ? 'cursor-pointer' : ''}`}
+                    onClick={() => handleFileClick(file)}
+                  >
+                    <FileIcon className={`w-4 h-4 flex-shrink-0 ${
+                      file.is_directory ? 'text-yellow-400' : file.extension === 'ipynb' ? 'text-orange-400' : 'text-slate-400'
+                    }`} />
+                    <span className="text-sm flex-1 truncate text-slate-300">
+                      {file.name}
+                    </span>
+                  </div>
+                  {!file.is_directory && (
+                    <>
+                      <span className="text-xs text-slate-500">
+                        {formatSize(file.size)}
+                      </span>
+                      {!selectMode && (
+                        <a
+                          href={getFileDownloadUrl(projectId, file.path)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="p-1 text-slate-500 hover:text-slate-200 opacity-0 group-hover:opacity-100 transition-opacity touch-manipulation"
+                          title="Download"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                        </a>
+                      )}
+                    </>
+                  )}
+                  {file.is_directory && !selectMode && (
+                    <ChevronRight className="w-4 h-4 text-slate-500" />
+                  )}
+                </div>
+              );
+            })}
+          </>
         )}
       </div>
     </div>

@@ -27,6 +27,7 @@ import {
 
 import { LogViewer } from '../components/LogViewer';
 import { CommandSection } from '../components/CommandSection';
+import { QuickRun } from '../components/QuickRun';
 import { FileExplorer } from '../components/FileExplorer';
 import { EnvEditor } from '../components/EnvEditor';
 import { TensorBoardWidget } from '../components/TensorBoardWidget';
@@ -122,13 +123,14 @@ function ProjectPage() {
   const [editInstallValue, setEditInstallValue] = useState('');
   const [editRunValue, setEditRunValue] = useState('');
   const [editRunEnabled, setEditRunEnabled] = useState(true);
+  const [editNotebookEnabled, setEditNotebookEnabled] = useState(false);
+  const [editDefaultNotebook, setEditDefaultNotebook] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
 
   // Jupyter state
   const [jupyterStatus, setJupyterStatus] = useState({ running: false });
   const [jupyterLoading, setJupyterLoading] = useState(false);
   const [notebooks, setNotebooks] = useState([]);
-  const [showNotebookModal, setShowNotebookModal] = useState(false);
   const [runningNotebook, setRunningNotebook] = useState(false);
 
   // Log streaming hook
@@ -209,10 +211,19 @@ function ProjectPage() {
     }
   };
 
-  const handleOpenSettings = () => {
+  const handleOpenSettings = async () => {
     setEditInstallValue(project.install_command);
     setEditRunValue(project.run_command);
     setEditRunEnabled(project.run_command_enabled ?? true);
+    setEditNotebookEnabled(project.run_notebook_enabled ?? false);
+    setEditDefaultNotebook(project.default_notebook || '');
+    // Fetch notebooks for the selector
+    try {
+      const result = await listNotebooks(projectId);
+      setNotebooks(result.notebooks || []);
+    } catch (e) {
+      console.error('Failed to fetch notebooks:', e);
+    }
     setIsSettingsOpen(true);
   };
 
@@ -223,6 +234,8 @@ function ProjectPage() {
         install_command: editInstallValue,
         run_command: editRunValue,
         run_command_enabled: editRunEnabled,
+        run_notebook_enabled: editNotebookEnabled,
+        default_notebook: editDefaultNotebook || null,
       });
       setIsSettingsOpen(false);
       await fetchData();
@@ -290,24 +303,17 @@ function ProjectPage() {
     }
   };
 
-  // Notebook handlers
-  const handleOpenNotebookModal = async () => {
-    try {
-      const result = await listNotebooks(projectId);
-      setNotebooks(result.notebooks || []);
-      setShowNotebookModal(true);
-    } catch (e) {
-      setError(e.message);
+  // Notebook handlers - run the default notebook directly
+  const handleRunDefaultNotebook = async () => {
+    if (!project.default_notebook) {
+      setError('No default notebook configured. Go to Settings to select one.');
+      return;
     }
-  };
-
-  const handleRunNotebook = async (notebookPath) => {
     setRunningNotebook(true);
     try {
-      const job = await runNotebook(projectId, notebookPath);
+      const job = await runNotebook(projectId, project.default_notebook);
       setSelectedJobId(job.id);
       clearLogs();
-      setShowNotebookModal(false);
       await fetchData();
     } catch (e) {
       setError(e.message);
@@ -526,14 +532,21 @@ function ProjectPage() {
                           <GitPullRequest className="w-4 h-4" />
                           Pull
                         </button>
-                        <button
-                          onClick={handleOpenNotebookModal}
-                          disabled={isCloning}
-                          className="flex items-center gap-2 px-4 py-2.5 bg-orange-500/20 text-orange-400 rounded-lg hover:bg-orange-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
-                        >
-                          <FileCode className="w-4 h-4" />
-                          Run Notebook
-                        </button>
+                        {project.run_notebook_enabled && (
+                          <button
+                            onClick={handleRunDefaultNotebook}
+                            disabled={isCloning || runningNotebook}
+                            className="flex items-center gap-2 px-4 py-2.5 bg-orange-500/20 text-orange-400 rounded-lg hover:bg-orange-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                            title={project.default_notebook || 'No notebook configured'}
+                          >
+                            {runningNotebook ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <FileCode className="w-4 h-4" />
+                            )}
+                            Notebook
+                          </button>
+                        )}
                       </>
                     )}
                     <div className="flex items-center gap-2 ml-auto">
@@ -555,16 +568,23 @@ function ProjectPage() {
                   </div>
                 </section>
 
+                {/* Quick Run */}
+                <QuickRun
+                  projectId={projectId}
+                  onJobStarted={(job) => {
+                    setSelectedJobId(job.id);
+                    clearLogs();
+                  }}
+                  onCommandsChange={fetchData}
+                  disabled={isRunning || isCloning}
+                />
+
                 {/* Command Templates */}
                 <CommandSection
                   projectId={projectId}
                   commands={commands}
                   onRunCommand={handleRunCommand}
                   onCommandsChange={fetchData}
-                  onJobStarted={(job) => {
-                    setSelectedJobId(job.id);
-                    clearLogs();
-                  }}
                   disabled={isRunning || isCloning}
                 />
 
@@ -728,6 +748,47 @@ function ProjectPage() {
                   />
                 </div>
               )}
+
+              {/* Divider */}
+              <div className="border-t border-slate-700 my-2"></div>
+
+              {/* Notebook toggle */}
+              <div>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editNotebookEnabled}
+                    onChange={(e) => setEditNotebookEnabled(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-600 bg-slate-950 text-orange-400 focus:ring-orange-400 focus:ring-offset-slate-900"
+                  />
+                  <span className="text-sm text-slate-300">Enable Run Notebook</span>
+                </label>
+              </div>
+
+              {/* Default notebook selector */}
+              {editNotebookEnabled && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-2">
+                    Default Notebook
+                  </label>
+                  {notebooks.length === 0 ? (
+                    <p className="text-sm text-slate-500 italic">No notebooks found in project</p>
+                  ) : (
+                    <select
+                      value={editDefaultNotebook}
+                      onChange={(e) => setEditDefaultNotebook(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-orange-400"
+                    >
+                      <option value="">Select a notebook...</option>
+                      {notebooks.map((nb) => (
+                        <option key={nb.path} value={nb.path}>
+                          {nb.path}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Footer */}
@@ -750,73 +811,6 @@ function ProjectPage() {
         </div>
       )}
 
-      {/* Run Notebook Modal */}
-      {showNotebookModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-slate-900 w-full max-w-lg rounded-xl border border-slate-800 overflow-hidden">
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50">
-              <div className="flex items-center gap-2">
-                <FileCode className="w-5 h-5 text-orange-400" />
-                <span className="font-semibold text-slate-100">Run Notebook</span>
-              </div>
-              <button
-                onClick={() => setShowNotebookModal(false)}
-                className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Content */}
-            <div className="p-4">
-              <p className="text-sm text-slate-400 mb-4">
-                Select a notebook to run with Papermill. The output will be saved for later inspection.
-              </p>
-
-              {notebooks.length === 0 ? (
-                <div className="text-center py-8 text-slate-500">
-                  <FileCode className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                  <p>No notebooks found in this project.</p>
-                  <p className="text-sm mt-1">Add .ipynb files to run them here.</p>
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {notebooks.map((nb) => (
-                    <button
-                      key={nb.path}
-                      onClick={() => handleRunNotebook(nb.path)}
-                      disabled={runningNotebook || isRunning}
-                      className="w-full flex items-center gap-3 p-3 bg-slate-800/50 hover:bg-slate-800 rounded-lg transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <FileCode className="w-5 h-5 text-orange-400 flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm text-slate-200 truncate">{nb.name}</div>
-                        <div className="text-xs text-slate-500 truncate">{nb.path}</div>
-                      </div>
-                      {runningNotebook ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-orange-400 flex-shrink-0" />
-                      ) : (
-                        <Play className="w-4 h-4 text-orange-400 flex-shrink-0" />
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="flex justify-end px-4 py-3 border-t border-slate-800 bg-slate-900/30">
-              <button
-                onClick={() => setShowNotebookModal(false)}
-                className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

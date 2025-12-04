@@ -38,6 +38,8 @@ class ProjectBase(SQLModel):
     install_command: str = "pip install -r requirements.txt"
     run_command: str = "python main.py"
     run_command_enabled: bool = True  # Toggle to enable/disable run command
+    run_notebook_enabled: bool = False  # Toggle to enable/disable notebook execution
+    default_notebook: Optional[str] = None  # Path to default notebook to run
 
 
 class Project(ProjectBase, table=True):
@@ -66,6 +68,8 @@ class ProjectUpdate(SQLModel):
     install_command: Optional[str] = None
     run_command: Optional[str] = None
     run_command_enabled: Optional[bool] = None
+    run_notebook_enabled: Optional[bool] = None
+    default_notebook: Optional[str] = None
 
 
 class ProjectRead(ProjectBase):

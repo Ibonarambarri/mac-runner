@@ -32,13 +32,23 @@ def run_migrations():
     conn = sqlite3.connect(DATABASE_PATH)
     cursor = conn.cursor()
 
-    # Check if run_command_enabled column exists in project table
+    # Check if columns exist in project table
     cursor.execute("PRAGMA table_info(project)")
     columns = [col[1] for col in cursor.fetchall()]
 
     if "run_command_enabled" not in columns:
         print("Migration: Adding run_command_enabled column to project table")
         cursor.execute("ALTER TABLE project ADD COLUMN run_command_enabled BOOLEAN DEFAULT 1")
+        conn.commit()
+
+    if "run_notebook_enabled" not in columns:
+        print("Migration: Adding run_notebook_enabled column to project table")
+        cursor.execute("ALTER TABLE project ADD COLUMN run_notebook_enabled BOOLEAN DEFAULT 0")
+        conn.commit()
+
+    if "default_notebook" not in columns:
+        print("Migration: Adding default_notebook column to project table")
+        cursor.execute("ALTER TABLE project ADD COLUMN default_notebook TEXT DEFAULT NULL")
         conn.commit()
 
     conn.close()
