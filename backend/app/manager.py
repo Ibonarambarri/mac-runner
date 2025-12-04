@@ -117,11 +117,16 @@ class PTYSession:
                 if self.slave_fd > 2:
                     os.close(self.slave_fd)
 
+                # Change to user's home directory
+                home_dir = os.path.expanduser('~')
+                os.chdir(home_dir)
+
                 # Set up environment
                 env = os.environ.copy()
                 env['TERM'] = 'xterm-256color'
                 env['COLORTERM'] = 'truecolor'
                 env['LANG'] = 'en_US.UTF-8'
+                env['HOME'] = home_dir
 
                 # Execute shell
                 shell = self._detect_shell()
