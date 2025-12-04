@@ -75,12 +75,11 @@ class ProcessManager:
         """
         self.workspaces_path = base_path / "workspaces"
         self.logs_path = base_path / "logs"
-        self.terminal_workspace = base_path / "workspaces" / "_terminal"
+        self.terminal_workspace = Path("/")  # Start terminal at system root
 
         # Ensure directories exist
         self.workspaces_path.mkdir(parents=True, exist_ok=True)
         self.logs_path.mkdir(parents=True, exist_ok=True)
-        self.terminal_workspace.mkdir(parents=True, exist_ok=True)
 
         # Track running processes by job_id
         self.running_processes: Dict[int, asyncio.subprocess.Process] = {}

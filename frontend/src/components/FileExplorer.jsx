@@ -81,14 +81,13 @@ export function FileExplorer({ projectId }) {
     fetchFiles();
   }, [fetchFiles]);
 
-  // Navigate to a directory
+  // Navigate to a directory (preserve selections when navigating)
   const navigateTo = (path) => {
     setCurrentPath(path);
     setSelectedFile(null);
     setFileContent(null);
     setShowPreview(false);
-    // Clear selections when navigating
-    setSelectedPaths(new Set());
+    // Don't clear selections when navigating - user may want to select from multiple folders
   };
 
   // Toggle select mode
@@ -260,16 +259,15 @@ export function FileExplorer({ projectId }) {
                 return (
                   <div
                     key={file.path}
-                    className={`flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800 transition-colors group cursor-pointer ${
+                    className={`flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800 transition-colors group ${
                       isSelected ? 'bg-terminal-green/10' : ''
                     } ${isChecked ? 'bg-slate-800' : ''}`}
-                    onClick={() => selectMode ? toggleSelection(file.path, { stopPropagation: () => {} }) : handleFileClick(file)}
                   >
-                    {/* Selection checkbox in select mode */}
+                    {/* Selection checkbox in select mode - only this is clickable for selection */}
                     {selectMode && (
                       <button
                         onClick={(e) => toggleSelection(file.path, e)}
-                        className="flex-shrink-0 p-0.5"
+                        className="flex-shrink-0 p-0.5 cursor-pointer"
                       >
                         {isChecked ? (
                           <CheckSquare className="w-4 h-4 text-terminal-green" />
@@ -278,14 +276,20 @@ export function FileExplorer({ projectId }) {
                         )}
                       </button>
                     )}
-                    <FileIcon className={`w-4 h-4 flex-shrink-0 ${
-                      file.is_directory ? 'text-yellow-400' : 'text-slate-400'
-                    }`} />
-                    <span className={`text-sm flex-1 truncate ${
-                      isSelected ? 'text-terminal-green' : 'text-slate-300'
-                    }`}>
-                      {file.name}
-                    </span>
+                    {/* File/folder content - always clickable for navigation/preview */}
+                    <div
+                      className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer"
+                      onClick={() => handleFileClick(file)}
+                    >
+                      <FileIcon className={`w-4 h-4 flex-shrink-0 ${
+                        file.is_directory ? 'text-yellow-400' : 'text-slate-400'
+                      }`} />
+                      <span className={`text-sm flex-1 truncate ${
+                        isSelected ? 'text-terminal-green' : 'text-slate-300'
+                      }`}>
+                        {file.name}
+                      </span>
+                    </div>
                     {!file.is_directory && (
                       <>
                         <span className="text-xs text-slate-500">
