@@ -11,11 +11,7 @@ import { useTerminal } from '../contexts/TerminalContext';
  * PersistentTerminal Component
  *
  * Full-screen terminal that persists in the background.
- * Unlike TerminalModal, this component:
- * - Never unmounts - uses CSS to hide/show
- * - Maintains WebSocket connection when hidden
- * - Preserves terminal state (scrollback, etc.)
- * - Calls fitAddon.fit() when becoming visible
+ * Uses CSS visibility to hide/show instead of unmounting.
  */
 export function PersistentTerminal() {
   const {
@@ -27,18 +23,19 @@ export function PersistentTerminal() {
     xtermRef,
     wsRef,
     fitAddonRef,
-    containerRef,
     closeTerminal,
   } = useTerminal();
 
   const terminalDivRef = useRef(null);
+  const containerRef = useRef(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const isInitializedRef = useRef(false);
+  const terminalMountedRef = useRef(false);
 
   // Initialize xterm.js terminal
   const initTerminal = useCallback(() => {
-    if (xtermRef.current || !terminalDivRef.current) return;
+    if (xtermRef.current || !terminalDivRef.current) return false;
 
     // Create xterm instance with MacRunner dark theme
     const term = new XTerm({
@@ -87,17 +84,25 @@ export function PersistentTerminal() {
 
     // Open terminal in container
     term.open(terminalDivRef.current);
-
-    // Initial fit
-    setTimeout(() => {
-      fitAddon.fit();
-    }, 0);
-
     xtermRef.current = term;
+    terminalMountedRef.current = true;
+
+    // Initial fit after a short delay to ensure container has dimensions
+    setTimeout(() => {
+      if (fitAddonRef.current) {
+        fitAddonRef.current.fit();
+      }
+    }, 50);
+
+    return true;
   }, [xtermRef, fitAddonRef]);
 
   // Connect to WebSocket
   const connectWebSocket = useCallback((sid) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      return; // Already connected
+    }
+
     if (wsRef.current) {
       wsRef.current.close();
     }
@@ -163,21 +168,25 @@ export function PersistentTerminal() {
 
   // Handle resize
   const handleResize = useCallback(() => {
-    if (fitAddonRef.current && xtermRef.current) {
-      fitAddonRef.current.fit();
+    if (fitAddonRef.current && xtermRef.current && isTerminalOpen) {
+      try {
+        fitAddonRef.current.fit();
 
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        const dims = fitAddonRef.current.proposeDimensions();
-        if (dims) {
-          wsRef.current.send(JSON.stringify({
-            type: 'resize',
-            cols: dims.cols,
-            rows: dims.rows
-          }));
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          const dims = fitAddonRef.current.proposeDimensions();
+          if (dims) {
+            wsRef.current.send(JSON.stringify({
+              type: 'resize',
+              cols: dims.cols,
+              rows: dims.rows
+            }));
+          }
         }
+      } catch (e) {
+        console.error('Resize error:', e);
       }
     }
-  }, [fitAddonRef, xtermRef, wsRef]);
+  }, [fitAddonRef, xtermRef, wsRef, isTerminalOpen]);
 
   // Reconnect to existing session
   const handleReconnect = useCallback(async () => {
@@ -187,14 +196,11 @@ export function PersistentTerminal() {
     setError(null);
 
     try {
-      // Check if session is still alive
       const status = await getTerminalStatus(sessionId);
 
       if (status.alive) {
-        // Session is alive, just reconnect WebSocket
         connectWebSocket(sessionId);
       } else {
-        // Session is dead, start a new one
         if (xtermRef.current) {
           xtermRef.current.write('\r\n\x1b[33m[Session expired, starting new session...]\x1b[0m\r\n');
         }
@@ -209,7 +215,7 @@ export function PersistentTerminal() {
     }
   }, [sessionId, connectWebSocket, setSessionId, xtermRef]);
 
-  // Start session when first opened (lazy initialization)
+  // Start session when first opened
   useEffect(() => {
     if (isTerminalOpen && !sessionId && !isInitializedRef.current) {
       isInitializedRef.current = true;
@@ -228,18 +234,28 @@ export function PersistentTerminal() {
     }
   }, [isTerminalOpen, sessionId, setSessionId]);
 
-  // Initialize terminal and connect when we have a session
+  // Initialize terminal when we have a session AND the terminal is visible
   useEffect(() => {
-    if (sessionId && !xtermRef.current) {
+    if (sessionId && isTerminalOpen && terminalDivRef.current && !xtermRef.current) {
+      // Small delay to ensure the container is visible and has dimensions
       const initTimeout = setTimeout(() => {
-        initTerminal();
-        connectWebSocket(sessionId);
-        setLoading(false);
+        const success = initTerminal();
+        if (success) {
+          connectWebSocket(sessionId);
+          setLoading(false);
+        }
       }, 100);
 
       return () => clearTimeout(initTimeout);
     }
-  }, [sessionId, initTerminal, connectWebSocket, xtermRef]);
+  }, [sessionId, isTerminalOpen, initTerminal, connectWebSocket, xtermRef]);
+
+  // Connect WebSocket if terminal exists but not connected
+  useEffect(() => {
+    if (sessionId && xtermRef.current && !isConnected && isTerminalOpen) {
+      connectWebSocket(sessionId);
+    }
+  }, [sessionId, xtermRef, isConnected, isTerminalOpen, connectWebSocket]);
 
   // Setup input handling after terminal is ready
   useEffect(() => {
@@ -267,22 +283,26 @@ export function PersistentTerminal() {
       window.removeEventListener('resize', handleResize);
       resizeObserver.disconnect();
     };
-  }, [handleResize, isTerminalOpen, containerRef]);
+  }, [handleResize, isTerminalOpen]);
 
-  // CRUCIAL: Call fit when terminal becomes visible
+  // Call fit when terminal becomes visible
   useEffect(() => {
     if (isTerminalOpen && fitAddonRef.current && xtermRef.current) {
       // Use requestAnimationFrame to ensure DOM is updated
       requestAnimationFrame(() => {
         setTimeout(() => {
-          fitAddonRef.current?.fit();
-          xtermRef.current?.focus();
+          try {
+            fitAddonRef.current?.fit();
+            xtermRef.current?.focus();
+          } catch (e) {
+            console.error('Fit error:', e);
+          }
         }, 50);
       });
     }
   }, [isTerminalOpen, fitAddonRef, xtermRef]);
 
-  // Handle escape key (Ctrl+Shift+Escape to close)
+  // Handle escape key
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape' && e.ctrlKey && e.shiftKey) {
@@ -296,13 +316,24 @@ export function PersistentTerminal() {
     }
   }, [isTerminalOpen, closeTerminal]);
 
-  // CSS-based hiding instead of unmounting
-  const containerClass = isTerminalOpen
-    ? 'fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm'
-    : 'hidden';
+  // Use visibility and position instead of display:none to keep element in DOM with dimensions
+  const containerStyle = {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 50,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    backdropFilter: 'blur(4px)',
+    visibility: isTerminalOpen ? 'visible' : 'hidden',
+    opacity: isTerminalOpen ? 1 : 0,
+    pointerEvents: isTerminalOpen ? 'auto' : 'none',
+    transition: 'opacity 0.15s ease-in-out, visibility 0.15s ease-in-out',
+  };
 
   return (
-    <div className={containerClass}>
+    <div style={containerStyle}>
       <div className="bg-slate-950 w-full h-full sm:h-[90vh] sm:max-w-5xl sm:rounded-xl border border-slate-800 flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50 flex-shrink-0">
@@ -354,24 +385,27 @@ export function PersistentTerminal() {
           className="flex-1 overflow-hidden relative"
           style={{ minHeight: '300px' }}
         >
-          {loading ? (
-            <div className="flex items-center justify-center h-full bg-slate-950">
+          {loading && !xtermRef.current ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-slate-950 z-10">
               <Loader2 className="w-6 h-6 animate-spin text-terminal-green" />
             </div>
-          ) : error ? (
-            <div className="flex items-center justify-center h-full bg-slate-950">
+          ) : null}
+
+          {error && !xtermRef.current ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-slate-950 z-10">
               <div className="text-red-400">Error: {error}</div>
             </div>
-          ) : (
-            <div
-              ref={terminalDivRef}
-              className="w-full h-full"
-              style={{
-                padding: '8px',
-                boxSizing: 'border-box',
-              }}
-            />
-          )}
+          ) : null}
+
+          {/* Terminal div - always rendered to maintain ref */}
+          <div
+            ref={terminalDivRef}
+            className="w-full h-full"
+            style={{
+              padding: '8px',
+              boxSizing: 'border-box',
+            }}
+          />
         </div>
 
         {/* Mobile input helper */}
