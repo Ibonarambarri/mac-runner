@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List
 
-from fastapi import FastAPI, HTTPException, Depends, WebSocket, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, WebSocket, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from sqlmodel import Session, select
@@ -21,7 +21,7 @@ from .models import (
     FileInfo
 )
 from .manager import init_process_manager, get_process_manager
-from .websockets import stream_logs, handle_terminal
+from .websockets import stream_logs, handle_terminal, handle_status_websocket, broadcast_status_update
 
 
 # Application base path (parent of /app)
@@ -221,11 +221,25 @@ async def pull_project(
 
     # Run git pull in background
     async def pull_task():
+        await broadcast_status_update("job_started", {
+            "job_id": job.id,
+            "project_id": project_id,
+            "project_name": project.name,
+            "command_name": "pull"
+        })
+
         with Session(engine) as bg_session:
             proj = bg_session.get(Project, project_id)
             j = bg_session.get(Job, job.id)
             manager = get_process_manager()
             await manager.git_pull(proj, j, bg_session)
+
+            j_updated = bg_session.get(Job, job.id)
+            await broadcast_status_update("job_finished", {
+                "job_id": job.id,
+                "project_id": project_id,
+                "status": j_updated.status.value if j_updated else "unknown"
+            })
 
     background_tasks.add_task(pull_task)
 
@@ -268,11 +282,25 @@ async def install_project(
 
     # Run install in background
     async def install_task():
+        await broadcast_status_update("job_started", {
+            "job_id": job.id,
+            "project_id": project_id,
+            "project_name": project.name,
+            "command_name": "install"
+        })
+
         with Session(engine) as bg_session:
             proj = bg_session.get(Project, project_id)
             j = bg_session.get(Job, job.id)
             manager = get_process_manager()
             await manager.run_command(proj, j, proj.install_command, bg_session)
+
+            j_updated = bg_session.get(Job, job.id)
+            await broadcast_status_update("job_finished", {
+                "job_id": job.id,
+                "project_id": project_id,
+                "status": j_updated.status.value if j_updated else "unknown"
+            })
 
     background_tasks.add_task(install_task)
 
@@ -317,11 +345,27 @@ async def run_project(
 
     # Run job in background
     async def run_task():
+        # Broadcast job started
+        await broadcast_status_update("job_started", {
+            "job_id": job.id,
+            "project_id": project_id,
+            "project_name": project.name,
+            "command_name": "run"
+        })
+
         with Session(engine) as bg_session:
             proj = bg_session.get(Project, project_id)
             j = bg_session.get(Job, job.id)
             manager = get_process_manager()
             await manager.run_command(proj, j, proj.run_command, bg_session)
+
+            # Broadcast job completed/failed
+            j_updated = bg_session.get(Job, job.id)
+            await broadcast_status_update("job_finished", {
+                "job_id": job.id,
+                "project_id": project_id,
+                "status": j_updated.status.value if j_updated else "unknown"
+            })
 
     background_tasks.add_task(run_task)
 
@@ -532,18 +576,92 @@ async def run_command_template(
     return job
 
 
-# ============================================================================
-# FILE EXPLORER ENDPOINTS
-# ============================================================================
+from pydantic import BaseModel
 
-@app.get("/projects/{project_id}/files", response_model=List[FileInfo])
-def list_files(
+class OneOffCommandRequest(BaseModel):
+    """Request body for one-off command execution."""
+    command: str
+
+
+@app.post("/projects/{project_id}/run-command", response_model=JobRead)
+async def run_one_off_command(
     project_id: int,
-    path: str = "",
+    request: OneOffCommandRequest,
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session)
 ):
     """
-    List files and directories at a given path within the project workspace.
+    Execute a one-off command without saving it as a template.
+    Creates a new job and streams logs via WebSocket.
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project.status == ProjectStatus.RUNNING:
+        raise HTTPException(status_code=400, detail="Project is already running")
+
+    if project.status == ProjectStatus.CLONING:
+        raise HTTPException(status_code=400, detail="Project is still cloning")
+
+    if not project.workspace_path:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
+    # Extract a short name from the command (first word)
+    command_parts = request.command.strip().split()
+    command_name = command_parts[0] if command_parts else "custom"
+
+    # Create job with command info
+    job = Job(
+        project_id=project_id,
+        status=JobStatus.PENDING,
+        command_name=command_name,
+        command_executed=request.command
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    # Run command in background
+    async def run_task():
+        await broadcast_status_update("job_started", {
+            "job_id": job.id,
+            "project_id": project_id,
+            "project_name": project.name,
+            "command_name": command_name
+        })
+
+        with Session(engine) as bg_session:
+            proj = bg_session.get(Project, project_id)
+            j = bg_session.get(Job, job.id)
+            manager = get_process_manager()
+            await manager.run_command(proj, j, request.command, bg_session)
+
+            j_updated = bg_session.get(Job, job.id)
+            await broadcast_status_update("job_finished", {
+                "job_id": job.id,
+                "project_id": project_id,
+                "status": j_updated.status.value if j_updated else "unknown"
+            })
+
+    background_tasks.add_task(run_task)
+
+    return job
+
+
+# ============================================================================
+# ENVIRONMENT VARIABLES ENDPOINTS
+# ============================================================================
+
+@app.get("/projects/{project_id}/env")
+def get_project_env(
+    project_id: int,
+    session: Session = Depends(get_session)
+):
+    """
+    Get environment variables for a project from its .env file.
+
+    Returns a list of {key, value} pairs.
     """
     project = session.get(Project, project_id)
     if not project:
@@ -552,9 +670,105 @@ def list_files(
     if not project.workspace_path:
         raise HTTPException(status_code=400, detail="Project workspace not ready")
 
+    env_path = Path(project.workspace_path) / ".env"
+    env_vars = []
+
+    if env_path.exists():
+        try:
+            with open(env_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    # Skip comments and empty lines
+                    if not line or line.startswith('#'):
+                        continue
+                    # Parse key=value
+                    if '=' in line:
+                        key, _, value = line.partition('=')
+                        # Remove quotes if present
+                        value = value.strip()
+                        if (value.startswith('"') and value.endswith('"')) or \
+                           (value.startswith("'") and value.endswith("'")):
+                            value = value[1:-1]
+                        env_vars.append({"key": key.strip(), "value": value})
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error reading .env file: {str(e)}")
+
+    return {"variables": env_vars}
+
+
+@app.put("/projects/{project_id}/env")
+def save_project_env(
+    project_id: int,
+    env_data: dict,
+    session: Session = Depends(get_session)
+):
+    """
+    Save environment variables to a project's .env file.
+
+    Expects: {"variables": [{"key": "...", "value": "..."}, ...]}
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.workspace_path:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
+    env_path = Path(project.workspace_path) / ".env"
+    variables = env_data.get("variables", [])
+
+    try:
+        with open(env_path, "w") as f:
+            f.write("# Environment variables for MacRunner project\n")
+            f.write("# Auto-generated - edit via MacRunner UI or directly\n\n")
+            for var in variables:
+                key = var.get("key", "").strip()
+                value = var.get("value", "")
+                if key:
+                    # Quote values with spaces or special characters
+                    if ' ' in value or '"' in value or "'" in value or '\n' in value:
+                        # Escape double quotes and use double quotes
+                        value = value.replace('"', '\\"')
+                        f.write(f'{key}="{value}"\n')
+                    else:
+                        f.write(f'{key}={value}\n')
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error writing .env file: {str(e)}")
+
+    return {"status": "saved", "count": len(variables)}
+
+
+# ============================================================================
+# FILE EXPLORER ENDPOINTS
+# ============================================================================
+
+@app.get("/projects/{project_id}/files", response_model=List[FileInfo])
+def list_files(
+    project_id: int,
+    path: str = "",
+    allow_external: bool = False,
+    show_hidden: bool = False,
+    session: Session = Depends(get_session)
+):
+    """
+    List files and directories at a given path.
+
+    Args:
+        project_id: Project ID
+        path: Path to list (relative to workspace, or absolute if allow_external=True)
+        allow_external: Allow browsing outside project workspace (for datasets, etc.)
+        show_hidden: Show hidden files (starting with .)
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.workspace_path and not allow_external:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
     manager = get_process_manager()
     try:
-        files = manager.list_directory(project_id, path)
+        files = manager.list_directory(project_id, path, allow_external=allow_external, show_hidden=show_hidden)
         return files
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -642,6 +856,257 @@ def download_folder_zip(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/projects/{project_id}/files/download-batch")
+def download_batch_files(
+    project_id: int,
+    paths: List[str] = Query(...),
+    session: Session = Depends(get_session)
+):
+    """
+    Download multiple selected files/folders as a single ZIP archive.
+
+    Args:
+        project_id: Project ID
+        paths: List of relative paths to include in the ZIP
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.workspace_path:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
+    if not paths:
+        raise HTTPException(status_code=400, detail="No files selected")
+
+    manager = get_process_manager()
+    try:
+        zip_path = manager.create_batch_zip_archive(project_id, paths)
+        return FileResponse(
+            path=zip_path,
+            filename=f"{project.name}_selected.zip",
+            media_type="application/zip",
+            background=None
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ============================================================================
+# TENSORBOARD ENDPOINTS
+# ============================================================================
+
+# Track running TensorBoard processes
+tensorboard_processes: dict = {}
+
+@app.get("/projects/{project_id}/tensorboard/detect")
+def detect_tensorboard_dirs(
+    project_id: int,
+    session: Session = Depends(get_session)
+):
+    """
+    Detect TensorBoard log directories in a project.
+
+    Looks for common directory names: runs, logs, tensorboard, tb_logs
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.workspace_path:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
+    workspace = Path(project.workspace_path)
+    tb_dirs = []
+
+    # Common TensorBoard directory names
+    tb_patterns = ['runs', 'logs', 'tensorboard', 'tb_logs', 'lightning_logs', 'mlruns']
+
+    for pattern in tb_patterns:
+        dir_path = workspace / pattern
+        if dir_path.exists() and dir_path.is_dir():
+            # Check if it has any content
+            has_content = any(dir_path.iterdir())
+            if has_content:
+                tb_dirs.append({
+                    "name": pattern,
+                    "path": str(dir_path.relative_to(workspace)),
+                    "full_path": str(dir_path)
+                })
+
+    # Also check for event files in subdirectories
+    for event_file in workspace.glob("**/events.out.tfevents.*"):
+        parent = event_file.parent
+        rel_path = str(parent.relative_to(workspace))
+        # Avoid duplicates
+        if not any(d["path"] == rel_path for d in tb_dirs):
+            tb_dirs.append({
+                "name": parent.name,
+                "path": rel_path,
+                "full_path": str(parent)
+            })
+
+    return {"directories": tb_dirs}
+
+
+@app.post("/projects/{project_id}/tensorboard/start")
+async def start_tensorboard(
+    project_id: int,
+    log_dir: str = "runs",
+    port: int = 6006,
+    session: Session = Depends(get_session)
+):
+    """
+    Start a TensorBoard server for a project.
+
+    Args:
+        project_id: Project ID
+        log_dir: Log directory relative to project workspace
+        port: Port to run TensorBoard on (default 6006)
+    """
+    import subprocess
+
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.workspace_path:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
+    workspace = Path(project.workspace_path)
+    full_log_dir = workspace / log_dir
+
+    if not full_log_dir.exists():
+        raise HTTPException(status_code=400, detail=f"Log directory '{log_dir}' does not exist")
+
+    # Check if already running for this project
+    key = f"{project_id}:{log_dir}"
+    if key in tensorboard_processes:
+        proc = tensorboard_processes[key]["process"]
+        if proc.poll() is None:  # Still running
+            return {
+                "status": "already_running",
+                "url": tensorboard_processes[key]["url"],
+                "port": tensorboard_processes[key]["port"]
+            }
+
+    # Find an available port starting from the requested one
+    import socket
+    def is_port_available(p):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(('localhost', p))
+                return True
+            except OSError:
+                return False
+
+    actual_port = port
+    for _ in range(10):
+        if is_port_available(actual_port):
+            break
+        actual_port += 1
+    else:
+        raise HTTPException(status_code=500, detail="Could not find available port")
+
+    # Start TensorBoard process
+    try:
+        # Use the project's venv if tensorboard is installed there, otherwise system
+        venv_tb = workspace / "venv" / "bin" / "tensorboard"
+        tb_cmd = str(venv_tb) if venv_tb.exists() else "tensorboard"
+
+        proc = subprocess.Popen(
+            [tb_cmd, "--logdir", str(full_log_dir), "--port", str(actual_port), "--bind_all"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=workspace
+        )
+
+        # Give it a moment to start
+        import time
+        time.sleep(2)
+
+        if proc.poll() is not None:
+            stderr = proc.stderr.read().decode() if proc.stderr else ""
+            raise HTTPException(status_code=500, detail=f"TensorBoard failed to start: {stderr}")
+
+        url = f"http://localhost:{actual_port}"
+        tensorboard_processes[key] = {
+            "process": proc,
+            "port": actual_port,
+            "url": url,
+            "log_dir": log_dir
+        }
+
+        return {
+            "status": "started",
+            "url": url,
+            "port": actual_port
+        }
+
+    except FileNotFoundError:
+        raise HTTPException(status_code=400, detail="TensorBoard not installed. Run: pip install tensorboard")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/projects/{project_id}/tensorboard/stop")
+async def stop_tensorboard(
+    project_id: int,
+    log_dir: str = "runs",
+    session: Session = Depends(get_session)
+):
+    """
+    Stop a running TensorBoard server.
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    key = f"{project_id}:{log_dir}"
+    if key not in tensorboard_processes:
+        return {"status": "not_running"}
+
+    proc = tensorboard_processes[key]["process"]
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except:
+            proc.kill()
+
+    del tensorboard_processes[key]
+    return {"status": "stopped"}
+
+
+@app.get("/projects/{project_id}/tensorboard/status")
+def get_tensorboard_status(
+    project_id: int,
+    session: Session = Depends(get_session)
+):
+    """
+    Get status of TensorBoard servers for a project.
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    running = []
+    for key, info in list(tensorboard_processes.items()):
+        if key.startswith(f"{project_id}:"):
+            proc = info["process"]
+            if proc.poll() is None:  # Still running
+                running.append({
+                    "log_dir": info["log_dir"],
+                    "url": info["url"],
+                    "port": info["port"]
+                })
+            else:
+                # Clean up dead processes
+                del tensorboard_processes[key]
+
+    return {"running": running}
+
+
 # ============================================================================
 # TERMINAL ENDPOINTS
 # ============================================================================
@@ -689,9 +1154,131 @@ async def websocket_logs(websocket: WebSocket, job_id: int):
     await stream_logs(websocket, job_id)
 
 
+@app.websocket("/ws/status")
+async def websocket_status(websocket: WebSocket):
+    """
+    WebSocket endpoint for global status updates.
+
+    Connect here to receive real-time notifications about:
+    - Job status changes (started, stopped, completed, failed)
+    - Project status changes
+    - New projects created
+
+    This eliminates the need for polling.
+    Messages are JSON formatted:
+    - {"type": "initial_state", "data": {...}}
+    - {"type": "job_started", "data": {...}}
+    - {"type": "job_completed", "data": {...}}
+    - {"type": "project_updated", "data": {...}}
+    """
+    await handle_status_websocket(websocket)
+
+
 # ============================================================================
-# HEALTH CHECK
+# SYSTEM STATUS & HEALTH CHECK
 # ============================================================================
+
+@app.get("/system/status")
+async def get_system_status():
+    """
+    Get current system resource usage.
+
+    Returns CPU, memory, and GPU (if available) usage stats
+    for the resource monitor widget.
+    """
+    import psutil
+    import subprocess
+    import platform
+
+    # CPU usage (percentage)
+    cpu_percent = psutil.cpu_percent(interval=0.1)
+    cpu_count = psutil.cpu_count()
+
+    # Memory usage
+    memory = psutil.virtual_memory()
+    memory_total_gb = memory.total / (1024 ** 3)
+    memory_used_gb = memory.used / (1024 ** 3)
+    memory_percent = memory.percent
+
+    # Disk usage for workspace
+    disk = psutil.disk_usage('/')
+    disk_total_gb = disk.total / (1024 ** 3)
+    disk_used_gb = disk.used / (1024 ** 3)
+    disk_percent = disk.percent
+
+    # GPU detection (macOS Apple Silicon or NVIDIA)
+    gpu_info = None
+    system = platform.system()
+
+    if system == "Darwin":
+        # macOS - try to get GPU info via system_profiler
+        try:
+            result = subprocess.run(
+                ["system_profiler", "SPDisplaysDataType", "-json"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                import json
+                data = json.loads(result.stdout)
+                displays = data.get("SPDisplaysDataType", [])
+                if displays:
+                    gpu_name = displays[0].get("sppci_model", "Unknown GPU")
+                    # For Apple Silicon, we can't get utilization easily
+                    # but we can indicate it's available
+                    gpu_info = {
+                        "name": gpu_name,
+                        "available": True,
+                        "utilization": None,  # Not easily accessible on macOS
+                        "memory_used": None,
+                        "memory_total": None
+                    }
+        except Exception:
+            pass
+    else:
+        # Linux/Windows - try nvidia-smi for NVIDIA GPUs
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name,utilization.gpu,memory.used,memory.total",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                if lines and lines[0]:
+                    parts = lines[0].split(', ')
+                    if len(parts) >= 4:
+                        gpu_info = {
+                            "name": parts[0].strip(),
+                            "available": True,
+                            "utilization": float(parts[1].strip()),
+                            "memory_used": float(parts[2].strip()),
+                            "memory_total": float(parts[3].strip())
+                        }
+        except Exception:
+            pass
+
+    return {
+        "cpu": {
+            "percent": cpu_percent,
+            "count": cpu_count
+        },
+        "memory": {
+            "percent": memory_percent,
+            "used_gb": round(memory_used_gb, 1),
+            "total_gb": round(memory_total_gb, 1)
+        },
+        "disk": {
+            "percent": disk_percent,
+            "used_gb": round(disk_used_gb, 1),
+            "total_gb": round(disk_total_gb, 1)
+        },
+        "gpu": gpu_info
+    }
+
 
 @app.get("/health")
 def health_check():

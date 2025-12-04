@@ -11,6 +11,7 @@ export function NewProjectModal({ isOpen, onClose, onSubmit, isLoading }) {
   const [repoUrl, setRepoUrl] = useState('');
   const [installCommand, setInstallCommand] = useState('pip install -r requirements.txt');
   const [runCommand, setRunCommand] = useState('python main.py');
+  const [runCommandEnabled, setRunCommandEnabled] = useState(true);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -19,6 +20,7 @@ export function NewProjectModal({ isOpen, onClose, onSubmit, isLoading }) {
       repo_url: repoUrl,
       install_command: installCommand,
       run_command: runCommand,
+      run_command_enabled: runCommandEnabled,
     });
   };
 
@@ -109,22 +111,37 @@ export function NewProjectModal({ isOpen, onClose, onSubmit, isLoading }) {
             </p>
           </div>
 
-          {/* Run Command */}
+          {/* Run Command Toggle */}
           <div>
-            <label className="block text-sm text-slate-300 mb-2">
-              Run Command
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={runCommandEnabled}
+                onChange={(e) => setRunCommandEnabled(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-600 bg-slate-950 text-terminal-green focus:ring-terminal-green focus:ring-offset-slate-900"
+              />
+              <span className="text-sm text-slate-300">Enable Run Command</span>
             </label>
-            <input
-              type="text"
-              value={runCommand}
-              onChange={(e) => setRunCommand(e.target.value)}
-              placeholder="python main.py"
-              className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-lg text-slate-200 placeholder-slate-500 font-mono text-sm focus:outline-none focus:border-terminal-green transition-colors"
-            />
-            <p className="mt-1 text-xs text-slate-500">
-              Command to start your task (training, rendering, etc.)
-            </p>
           </div>
+
+          {/* Run Command */}
+          {runCommandEnabled && (
+            <div>
+              <label className="block text-sm text-slate-300 mb-2">
+                Run Command
+              </label>
+              <input
+                type="text"
+                value={runCommand}
+                onChange={(e) => setRunCommand(e.target.value)}
+                placeholder="python main.py"
+                className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-lg text-slate-200 placeholder-slate-500 font-mono text-sm focus:outline-none focus:border-terminal-green transition-colors"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Command to start your task (training, rendering, etc.)
+              </p>
+            </div>
+          )}
 
           {/* Actions */}
           <div className="flex gap-3 pt-2 pb-safe">

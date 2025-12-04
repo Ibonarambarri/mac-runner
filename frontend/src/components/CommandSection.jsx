@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Play, Plus, Trash2, Terminal, X, Check, Pencil } from 'lucide-react';
-import { createCommandTemplate, deleteCommandTemplate, updateCommandTemplate } from '../api';
+import { Play, Plus, Trash2, Terminal, X, Check, Pencil, Zap } from 'lucide-react';
+import { createCommandTemplate, deleteCommandTemplate, updateCommandTemplate, runOneOffCommand } from '../api';
 
 /**
  * CommandSection Component
@@ -16,6 +16,7 @@ export function CommandSection({
   commands,
   onRunCommand,
   onCommandsChange,
+  onJobStarted,
   disabled,
 }) {
   const [isCreating, setIsCreating] = useState(false);
@@ -26,6 +27,31 @@ export function CommandSection({
   // Inline edit state
   const [editingId, setEditingId] = useState(null);
   const [editValue, setEditValue] = useState('');
+
+  // One-off command state
+  const [quickCommand, setQuickCommand] = useState('');
+  const [runningQuick, setRunningQuick] = useState(false);
+
+  const handleRunQuick = async (e) => {
+    e.preventDefault();
+    if (!quickCommand.trim()) return;
+
+    setRunningQuick(true);
+    setError(null);
+
+    try {
+      const job = await runOneOffCommand(projectId, quickCommand.trim());
+      setQuickCommand('');
+      if (onJobStarted) {
+        onJobStarted(job);
+      }
+      onCommandsChange();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRunningQuick(false);
+    }
+  };
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -125,6 +151,38 @@ export function CommandSection({
           </button>
         </div>
       )}
+
+      {/* Quick Run - One-off command */}
+      <form onSubmit={handleRunQuick} className="mb-4 p-3 bg-slate-800/30 rounded-lg border border-slate-700">
+        <div className="flex items-center gap-2 mb-2">
+          <Zap className="w-4 h-4 text-yellow-400" />
+          <span className="text-xs font-medium text-slate-400">Quick Run (one-off)</span>
+        </div>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={quickCommand}
+            onChange={(e) => setQuickCommand(e.target.value)}
+            placeholder="Run any command once..."
+            disabled={disabled}
+            className="flex-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm font-mono text-slate-200 placeholder-slate-500 focus:outline-none focus:border-yellow-400 disabled:opacity-50"
+          />
+          <button
+            type="submit"
+            disabled={disabled || runningQuick || !quickCommand.trim()}
+            className="px-3 py-2 bg-yellow-500/20 text-yellow-400 text-sm rounded hover:bg-yellow-500/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            {runningQuick ? (
+              <span className="animate-spin">...</span>
+            ) : (
+              <>
+                <Play className="w-4 h-4" />
+                Run
+              </>
+            )}
+          </button>
+        </div>
+      </form>
 
       {/* Create form */}
       {isCreating && (

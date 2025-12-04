@@ -12,8 +12,10 @@ import {
   Loader2,
   Home,
   X,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
-import { listFiles, getFileContent, getFileDownloadUrl, getFolderZipUrl } from '../api';
+import { listFiles, getFileContent, getFileDownloadUrl, getFolderZipUrl, getBatchDownloadUrl } from '../api';
 
 /**
  * Get icon component based on file extension
@@ -57,6 +59,10 @@ export function FileExplorer({ projectId }) {
   const [loadingContent, setLoadingContent] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
 
+  // Multi-select state
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedPaths, setSelectedPaths] = useState(new Set());
+
   // Fetch files for current path
   const fetchFiles = useCallback(async () => {
     setLoading(true);
@@ -81,6 +87,37 @@ export function FileExplorer({ projectId }) {
     setSelectedFile(null);
     setFileContent(null);
     setShowPreview(false);
+    // Clear selections when navigating
+    setSelectedPaths(new Set());
+  };
+
+  // Toggle select mode
+  const toggleSelectMode = () => {
+    if (selectMode) {
+      setSelectedPaths(new Set());
+    }
+    setSelectMode(!selectMode);
+  };
+
+  // Toggle selection of a file/folder
+  const toggleSelection = (path, e) => {
+    e.stopPropagation();
+    setSelectedPaths((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(path)) {
+        newSet.delete(path);
+      } else {
+        newSet.add(path);
+      }
+      return newSet;
+    });
+  };
+
+  // Handle batch download
+  const handleBatchDownload = () => {
+    if (selectedPaths.size === 0) return;
+    const url = getBatchDownloadUrl(projectId, Array.from(selectedPaths));
+    window.location.href = url;
   };
 
   // Go back one level
@@ -157,14 +194,36 @@ export function FileExplorer({ projectId }) {
             </>
           )}
 
-          {/* Download ZIP button */}
-          <a
-            href={getFolderZipUrl(projectId, currentPath)}
-            className="ml-auto p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors flex-shrink-0 touch-manipulation"
-            title="Download as ZIP"
-          >
-            <Archive className="w-4 h-4" />
-          </a>
+          {/* Select mode and download buttons */}
+          <div className="ml-auto flex items-center gap-2">
+            {selectMode && selectedPaths.size > 0 && (
+              <button
+                onClick={handleBatchDownload}
+                className="flex items-center gap-1.5 px-2 py-1 text-xs bg-terminal-green/20 text-terminal-green rounded hover:bg-terminal-green/30 transition-colors touch-manipulation"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download {selectedPaths.size} selected
+              </button>
+            )}
+            <button
+              onClick={toggleSelectMode}
+              className={`p-1.5 rounded transition-colors flex-shrink-0 touch-manipulation ${
+                selectMode
+                  ? 'bg-terminal-green/20 text-terminal-green'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+              title={selectMode ? 'Exit select mode' : 'Select files'}
+            >
+              <CheckSquare className="w-4 h-4" />
+            </button>
+            <a
+              href={getFolderZipUrl(projectId, currentPath)}
+              className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors flex-shrink-0 touch-manipulation"
+              title="Download folder as ZIP"
+            >
+              <Archive className="w-4 h-4" />
+            </a>
+          </div>
         </div>
       </div>
 
@@ -196,15 +255,29 @@ export function FileExplorer({ projectId }) {
               {files.map((file) => {
                 const FileIcon = getFileIcon(file.extension, file.is_directory);
                 const isSelected = selectedFile?.path === file.path;
+                const isChecked = selectedPaths.has(file.path);
 
                 return (
                   <div
                     key={file.path}
                     className={`flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800 transition-colors group cursor-pointer ${
                       isSelected ? 'bg-terminal-green/10' : ''
-                    }`}
-                    onClick={() => handleFileClick(file)}
+                    } ${isChecked ? 'bg-slate-800' : ''}`}
+                    onClick={() => selectMode ? toggleSelection(file.path, { stopPropagation: () => {} }) : handleFileClick(file)}
                   >
+                    {/* Selection checkbox in select mode */}
+                    {selectMode && (
+                      <button
+                        onClick={(e) => toggleSelection(file.path, e)}
+                        className="flex-shrink-0 p-0.5"
+                      >
+                        {isChecked ? (
+                          <CheckSquare className="w-4 h-4 text-terminal-green" />
+                        ) : (
+                          <Square className="w-4 h-4 text-slate-500 hover:text-slate-300" />
+                        )}
+                      </button>
+                    )}
                     <FileIcon className={`w-4 h-4 flex-shrink-0 ${
                       file.is_directory ? 'text-yellow-400' : 'text-slate-400'
                     }`} />
@@ -218,17 +291,19 @@ export function FileExplorer({ projectId }) {
                         <span className="text-xs text-slate-500">
                           {formatSize(file.size)}
                         </span>
-                        <a
-                          href={getFileDownloadUrl(projectId, file.path)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="p-1 text-slate-500 hover:text-slate-200 opacity-0 group-hover:opacity-100 transition-opacity touch-manipulation"
-                          title="Download"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                        </a>
+                        {!selectMode && (
+                          <a
+                            href={getFileDownloadUrl(projectId, file.path)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1 text-slate-500 hover:text-slate-200 opacity-0 group-hover:opacity-100 transition-opacity touch-manipulation"
+                            title="Download"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </a>
+                        )}
                       </>
                     )}
-                    {file.is_directory && (
+                    {file.is_directory && !selectMode && (
                       <ChevronRight className="w-4 h-4 text-slate-500" />
                     )}
                   </div>

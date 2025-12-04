@@ -1,10 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Terminal, Plus, RefreshCw, Cpu } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Terminal, Plus, RefreshCw, Cpu, Wifi, WifiOff } from 'lucide-react';
 
 import { ProjectCard } from './components/ProjectCard';
 import { LogViewer } from './components/LogViewer';
 import { NewProjectModal } from './components/NewProjectModal';
+import { ResourceMonitor } from './components/ResourceMonitor';
 import { useLogStream } from './hooks/useLogStream';
+import { useStatusStream } from './hooks/useStatusStream';
+import { useFavicon } from './hooks/useFavicon';
 
 import {
   getProjects,
@@ -34,9 +37,15 @@ function App() {
   const [error, setError] = useState(null);
 
   // Log streaming hook
-  const { logs, isConnected, isComplete, error: wsError, clearLogs } = useLogStream(selectedJobId);
+  const { logs, isConnected: logConnected, isComplete, error: wsError, clearLogs } = useLogStream(selectedJobId);
 
-  // Fetch projects on mount and periodically
+  // Status WebSocket for real-time updates (replaces polling)
+  const { isConnected: statusConnected, subscribe } = useStatusStream();
+
+  // Dynamic favicon based on job status
+  useFavicon(projects, projectJobs);
+
+  // Fetch projects - called on mount and when needed
   const fetchProjects = useCallback(async () => {
     try {
       const data = await getProjects();
@@ -58,11 +67,62 @@ function App() {
     }
   }, []);
 
+  // Initial fetch on mount
   useEffect(() => {
     fetchProjects();
+  }, [fetchProjects]);
 
-    // Poll for updates every 3 seconds
-    const interval = setInterval(fetchProjects, 3000);
+  // Subscribe to WebSocket status updates
+  useEffect(() => {
+    const unsubscribe = subscribe((event) => {
+      // Handle different event types
+      switch (event.type) {
+        case 'initial_state':
+          // Update project statuses from initial state
+          setProjects(prev => prev.map(p => {
+            const updated = event.data.projects?.find(up => up.id === p.id);
+            return updated ? { ...p, status: updated.status } : p;
+          }));
+          break;
+
+        case 'job_started':
+          // Update project status to running
+          setProjects(prev => prev.map(p =>
+            p.id === event.data.project_id ? { ...p, status: 'running' } : p
+          ));
+          // Optionally auto-select the new job
+          if (event.data.job_id) {
+            setSelectedJobId(event.data.job_id);
+          }
+          break;
+
+        case 'job_finished':
+          // Update project status back to idle and refresh jobs
+          setProjects(prev => prev.map(p =>
+            p.id === event.data.project_id ? { ...p, status: 'idle' } : p
+          ));
+          // Refresh job list for this project
+          getProjectJobs(event.data.project_id).then(jobs => {
+            setProjectJobs(prev => ({ ...prev, [event.data.project_id]: jobs }));
+          }).catch(console.error);
+          break;
+
+        case 'project_updated':
+          // Refresh project data
+          fetchProjects();
+          break;
+
+        default:
+          console.log('[Status] Unknown event:', event.type);
+      }
+    });
+
+    return unsubscribe;
+  }, [subscribe, fetchProjects]);
+
+  // Fallback polling every 30s (instead of 3s) as backup
+  useEffect(() => {
+    const interval = setInterval(fetchProjects, 30000);
     return () => clearInterval(interval);
   }, [fetchProjects]);
 
@@ -153,6 +213,11 @@ function App() {
             </div>
 
             <div className="flex items-center gap-2 sm:gap-3">
+              {/* System Resource Monitor */}
+              <div className="hidden md:block">
+                <ResourceMonitor />
+              </div>
+
               <button
                 onClick={fetchProjects}
                 className="p-2.5 sm:p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors touch-manipulation"
@@ -251,7 +316,7 @@ function App() {
             <div className="flex-1 overflow-hidden">
               <LogViewer
                 logs={logs}
-                isConnected={isConnected}
+                isConnected={logConnected}
                 isComplete={isComplete}
                 error={wsError}
               />

@@ -38,22 +38,18 @@ def validate_repo_url(url: str) -> bool:
 
 def sanitize_command(command: str) -> str:
     """
-    Basic sanitization of commands - removes obviously dangerous patterns.
-    Note: This is defense in depth, not a complete solution.
+    Command pass-through for trusted environment.
+
+    SECURITY NOTE: Sanitization disabled for single-user, trusted network deployment.
+    This allows complex chained commands (&&, ||, ;), file operations, and
+    command substitution needed for ML/DS workflows.
+
+    Original patterns that were blocked:
+    - Command chaining with rm (;rm, &&rm, |rm)
+    - Backtick command substitution
+    - $() command substitution
     """
-    # Remove command chaining attempts that could break out
-    dangerous_patterns = [
-        r';\s*rm\s',
-        r'&&\s*rm\s',
-        r'\|\s*rm\s',
-        r'`.*`',  # Backtick command substitution
-        r'\$\(.*\)',  # $() command substitution
-    ]
-
-    for pattern in dangerous_patterns:
-        if re.search(pattern, command, re.IGNORECASE):
-            raise ValueError(f"Command contains potentially dangerous pattern")
-
+    # Pass through all commands in trusted environment
     return command
 
 
@@ -66,14 +62,16 @@ class ProcessManager:
     - Virtual environment creation and management
     - Log streaming via async generators
     - General terminal for system-wide commands
+    - Job concurrency queue (configurable max concurrent jobs)
     """
 
-    def __init__(self, base_path: Path):
+    def __init__(self, base_path: Path, max_concurrent_jobs: int = 2):
         """
         Initialize the process manager.
 
         Args:
             base_path: Root directory for workspaces and logs
+            max_concurrent_jobs: Maximum number of jobs to run concurrently
         """
         self.workspaces_path = base_path / "workspaces"
         self.logs_path = base_path / "logs"
@@ -96,6 +94,12 @@ class ProcessManager:
         # Terminal output queues (session_id -> list of connected queues)
         self.terminal_queues: Dict[int, list[asyncio.Queue]] = defaultdict(list)
 
+        # Job concurrency control
+        self.max_concurrent_jobs = max_concurrent_jobs
+        self._job_semaphore = asyncio.Semaphore(max_concurrent_jobs)
+        self._job_queue: List[dict] = []  # Queue of waiting jobs
+        self._active_jobs: int = 0
+
     def get_project_workspace(self, project_id: int) -> Path:
         """Get the workspace directory for a project."""
         return self.workspaces_path / f"project_{project_id}"
@@ -104,6 +108,73 @@ class ProcessManager:
         """Get the log file path for a job."""
         return self.logs_path / f"job_{job_id}.log"
 
+    def detect_package_manager(self, workspace: Path) -> dict:
+        """
+        Detect the package manager based on project files.
+
+        Returns a dict with:
+        - type: 'uv', 'conda', 'pip', or 'unknown'
+        - install_command: Suggested install command
+        - files_found: List of detected config files
+        """
+        files_found = []
+
+        # Check for various package manager config files
+        pyproject = workspace / "pyproject.toml"
+        environment_yml = workspace / "environment.yml"
+        environment_yaml = workspace / "environment.yaml"
+        requirements_txt = workspace / "requirements.txt"
+        setup_py = workspace / "setup.py"
+        poetry_lock = workspace / "poetry.lock"
+
+        if pyproject.exists():
+            files_found.append("pyproject.toml")
+            # Check if it's a uv/poetry project
+            content = pyproject.read_text()
+            if "[tool.poetry]" in content:
+                files_found.append("(poetry project)")
+                return {
+                    "type": "poetry",
+                    "install_command": "poetry install",
+                    "files_found": files_found
+                }
+            elif "[project]" in content or "[tool.uv]" in content:
+                return {
+                    "type": "uv",
+                    "install_command": "uv pip install -e .",
+                    "files_found": files_found
+                }
+
+        if environment_yml.exists() or environment_yaml.exists():
+            files_found.append("environment.yml" if environment_yml.exists() else "environment.yaml")
+            return {
+                "type": "conda",
+                "install_command": "conda env update --file environment.yml",
+                "files_found": files_found
+            }
+
+        if requirements_txt.exists():
+            files_found.append("requirements.txt")
+            return {
+                "type": "pip",
+                "install_command": "pip install -r requirements.txt",
+                "files_found": files_found
+            }
+
+        if setup_py.exists():
+            files_found.append("setup.py")
+            return {
+                "type": "pip",
+                "install_command": "pip install -e .",
+                "files_found": files_found
+            }
+
+        return {
+            "type": "unknown",
+            "install_command": "pip install -r requirements.txt",
+            "files_found": files_found
+        }
+
     async def clone_repository(
         self,
         project: Project,
@@ -111,6 +182,8 @@ class ProcessManager:
     ) -> bool:
         """
         Clone a GitHub repository into the project workspace.
+
+        Also detects the package manager and suggests install commands.
 
         Args:
             project: Project model with repo_url
@@ -177,6 +250,14 @@ class ProcessManager:
                 session.commit()
                 return False
 
+            # Detect package manager and update install command if still default
+            pkg_info = self.detect_package_manager(workspace)
+            if pkg_info["type"] != "unknown":
+                # Only update if using default command
+                if project.install_command == "pip install -r requirements.txt":
+                    project.install_command = pkg_info["install_command"]
+                    print(f"Detected {pkg_info['type']} project, suggesting: {pkg_info['install_command']}")
+
             # Success - set to idle
             project.status = ProjectStatus.IDLE
             session.add(project)
@@ -191,6 +272,53 @@ class ProcessManager:
             session.commit()
             return False
 
+    def load_env_file(self, workspace: Path) -> dict:
+        """
+        Load environment variables from a .env file in the workspace.
+
+        Returns a dict of key-value pairs.
+        """
+        env_path = workspace / ".env"
+        env_vars = {}
+
+        if env_path.exists():
+            try:
+                with open(env_path, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        # Skip comments and empty lines
+                        if not line or line.startswith('#'):
+                            continue
+                        # Parse key=value
+                        if '=' in line:
+                            key, _, value = line.partition('=')
+                            key = key.strip()
+                            value = value.strip()
+                            # Remove quotes if present
+                            if (value.startswith('"') and value.endswith('"')) or \
+                               (value.startswith("'") and value.endswith("'")):
+                                value = value[1:-1]
+                            # Unescape quotes
+                            value = value.replace('\\"', '"')
+                            env_vars[key] = value
+            except Exception as e:
+                print(f"Warning: Could not load .env file: {e}")
+
+        return env_vars
+
+    def get_queue_status(self) -> dict:
+        """
+        Get current job queue status.
+
+        Returns:
+            Dict with active_jobs, max_concurrent, and queue_length
+        """
+        return {
+            "active_jobs": len(self.running_processes),
+            "max_concurrent": self.max_concurrent_jobs,
+            "queue_length": len(self._job_queue)
+        }
+
     async def run_command(
         self,
         project: Project,
@@ -199,7 +327,7 @@ class ProcessManager:
         session: Session
     ) -> None:
         """
-        Execute any command as an async subprocess.
+        Execute any command as an async subprocess with concurrency control.
 
         This is the generic method used by all command execution (run, install, custom templates).
 
@@ -207,6 +335,8 @@ class ProcessManager:
         1. PYTHONUNBUFFERED=1 ensures Python output is not buffered
         2. stdout/stderr are read line-by-line for real-time streaming
         3. Lines are pushed to queues AND written to log file
+        4. Environment variables from .env file are loaded automatically
+        5. Job concurrency is controlled by semaphore (max N concurrent jobs)
 
         Args:
             project: Project with workspace configuration
@@ -218,132 +348,148 @@ class ProcessManager:
         venv_path = workspace / "venv"
         log_path = self.get_job_log_path(job.id)
 
-        # Build the activation + command
-        # We source the venv and run the command in a single shell
-        activate_cmd = f'source "{venv_path}/bin/activate"'
-        full_command = f"{activate_cmd} && {command}"
+        # Wait for semaphore slot (limits concurrent jobs)
+        queue_position = len(self.running_processes)
+        if queue_position >= self.max_concurrent_jobs:
+            # Write queued status to log
+            with open(log_path, "w") as log_file:
+                queue_msg = f"[QUEUED] Job is waiting in queue (position {queue_position - self.max_concurrent_jobs + 1})...\n"
+                log_file.write(queue_msg)
+                for queue in self.log_queues[job.id]:
+                    await queue.put(queue_msg)
 
-        # Environment variables - CRITICAL for real-time output
-        env = os.environ.copy()
-        env["PYTHONUNBUFFERED"] = "1"  # Force unbuffered Python output
-        env["FORCE_COLOR"] = "1"  # Enable colored output if supported
+        async with self._job_semaphore:
+            # Build the activation + command
+            # We source the venv and run the command in a single shell
+            activate_cmd = f'source "{venv_path}/bin/activate"'
+            full_command = f"{activate_cmd} && {command}"
 
-        # Update job status
-        job.status = JobStatus.RUNNING
-        job.log_path = str(log_path)
-        session.add(job)
-        session.commit()
+            # Environment variables - CRITICAL for real-time output
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"  # Force unbuffered Python output
+            env["FORCE_COLOR"] = "1"  # Enable colored output if supported
 
-        # Update project status
-        project.status = ProjectStatus.RUNNING
-        session.add(project)
-        session.commit()
+            # Load project-specific environment variables from .env file
+            project_env = self.load_env_file(workspace)
+            env.update(project_env)
 
-        try:
-            # Create subprocess with piped stdout/stderr
-            # Using shell=True via create_subprocess_shell to handle complex commands
-            process = await asyncio.create_subprocess_shell(
-                full_command,
-                cwd=workspace,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-                # Start new process group for clean termination
-                start_new_session=True
-            )
-
-            # Store process and PID for potential stopping
-            self.running_processes[job.id] = process
-            job.pid = process.pid
+            # Update job status
+            job.status = JobStatus.RUNNING
+            job.log_path = str(log_path)
             session.add(job)
             session.commit()
 
-            # Open log file for writing
-            with open(log_path, "w") as log_file:
-                # Write command being executed as header
-                header = f"$ {command}\n{'='*50}\n"
-                log_file.write(header)
-                for queue in self.log_queues[job.id]:
-                    await queue.put(header)
+            # Update project status
+            project.status = ProjectStatus.RUNNING
+            session.add(project)
+            session.commit()
 
-                # Process stdout and stderr concurrently
-                # This ensures we capture all output in real-time
-                async def read_stream(stream, prefix=""):
-                    """Read stream line by line and broadcast to queues."""
-                    while True:
-                        line = await stream.readline()
-                        if not line:
-                            break
-
-                        decoded_line = line.decode("utf-8", errors="replace")
-                        formatted_line = f"{prefix}{decoded_line}"
-
-                        # Write to log file
-                        log_file.write(formatted_line)
-                        log_file.flush()  # Ensure immediate write
-
-                        # Broadcast to all connected WebSocket queues
-                        for queue in self.log_queues[job.id]:
-                            await queue.put(formatted_line)
-
-                # Run both stream readers concurrently
-                await asyncio.gather(
-                    read_stream(process.stdout),
-                    read_stream(process.stderr, prefix="[stderr] ")
+            try:
+                # Create subprocess with piped stdout/stderr
+                # Using shell=True via create_subprocess_shell to handle complex commands
+                process = await asyncio.create_subprocess_shell(
+                    full_command,
+                    cwd=workspace,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=env,
+                    # Start new process group for clean termination
+                    start_new_session=True
                 )
 
-                # Wait for process to complete
-                return_code = await process.wait()
+                # Store process and PID for potential stopping
+                self.running_processes[job.id] = process
+                job.pid = process.pid
+                session.add(job)
+                session.commit()
 
-                # Final status message
-                end_msg = f"\n{'='*50}\nProcess finished with exit code: {return_code}\n"
-                log_file.write(end_msg)
+                # Open log file for writing (append mode if queued message was written)
+                mode = "a" if queue_position >= self.max_concurrent_jobs else "w"
+                with open(log_path, mode) as log_file:
+                    # Write command being executed as header
+                    header = f"$ {command}\n{'='*50}\n"
+                    log_file.write(header)
+                    for queue in self.log_queues[job.id]:
+                        await queue.put(header)
+
+                    # Process stdout and stderr concurrently
+                    # This ensures we capture all output in real-time
+                    async def read_stream(stream, prefix=""):
+                        """Read stream line by line and broadcast to queues."""
+                        while True:
+                            line = await stream.readline()
+                            if not line:
+                                break
+
+                            decoded_line = line.decode("utf-8", errors="replace")
+                            formatted_line = f"{prefix}{decoded_line}"
+
+                            # Write to log file
+                            log_file.write(formatted_line)
+                            log_file.flush()  # Ensure immediate write
+
+                            # Broadcast to all connected WebSocket queues
+                            for queue in self.log_queues[job.id]:
+                                await queue.put(formatted_line)
+
+                    # Run both stream readers concurrently
+                    await asyncio.gather(
+                        read_stream(process.stdout),
+                        read_stream(process.stderr, prefix="[stderr] ")
+                    )
+
+                    # Wait for process to complete
+                    return_code = await process.wait()
+
+                    # Final status message
+                    end_msg = f"\n{'='*50}\nProcess finished with exit code: {return_code}\n"
+                    log_file.write(end_msg)
+                    for queue in self.log_queues[job.id]:
+                        await queue.put(end_msg)
+                        await queue.put(None)  # Signal end of stream
+
+                # Update final status
+                job.status = JobStatus.COMPLETED if return_code == 0 else JobStatus.FAILED
+                job.end_time = datetime.now(timezone.utc)
+                session.add(job)
+
+                project.status = ProjectStatus.IDLE
+                session.add(project)
+                session.commit()
+
+            except asyncio.CancelledError:
+                # Job was stopped
+                job.status = JobStatus.STOPPED
+                job.end_time = datetime.now(timezone.utc)
+                session.add(job)
+
+                project.status = ProjectStatus.IDLE
+                session.add(project)
+                session.commit()
+
+            except Exception as e:
+                error_msg = f"\n[ERROR] {str(e)}\n"
+
+                # Write error to log
+                with open(log_path, "a") as log_file:
+                    log_file.write(error_msg)
+
+                # Broadcast error
                 for queue in self.log_queues[job.id]:
-                    await queue.put(end_msg)
-                    await queue.put(None)  # Signal end of stream
+                    await queue.put(error_msg)
+                    await queue.put(None)
 
-            # Update final status
-            job.status = JobStatus.COMPLETED if return_code == 0 else JobStatus.FAILED
-            job.end_time = datetime.now(timezone.utc)
-            session.add(job)
+                job.status = JobStatus.FAILED
+                job.end_time = datetime.now(timezone.utc)
+                session.add(job)
 
-            project.status = ProjectStatus.IDLE
-            session.add(project)
-            session.commit()
+                project.status = ProjectStatus.ERROR
+                session.add(project)
+                session.commit()
 
-        except asyncio.CancelledError:
-            # Job was stopped
-            job.status = JobStatus.STOPPED
-            job.end_time = datetime.now(timezone.utc)
-            session.add(job)
-
-            project.status = ProjectStatus.IDLE
-            session.add(project)
-            session.commit()
-
-        except Exception as e:
-            error_msg = f"\n[ERROR] {str(e)}\n"
-
-            # Write error to log
-            with open(log_path, "a") as log_file:
-                log_file.write(error_msg)
-
-            # Broadcast error
-            for queue in self.log_queues[job.id]:
-                await queue.put(error_msg)
-                await queue.put(None)
-
-            job.status = JobStatus.FAILED
-            job.end_time = datetime.now(timezone.utc)
-            session.add(job)
-
-            project.status = ProjectStatus.ERROR
-            session.add(project)
-            session.commit()
-
-        finally:
-            # Cleanup
-            self.running_processes.pop(job.id, None)
+            finally:
+                # Cleanup
+                self.running_processes.pop(job.id, None)
 
     async def stop_job(self, job_id: int) -> bool:
         """
@@ -403,19 +549,67 @@ class ProcessManager:
             if not self.log_queues[job_id]:
                 del self.log_queues[job_id]
 
-    async def get_existing_logs(self, job_id: int) -> AsyncGenerator[str, None]:
+    async def get_existing_logs(
+        self,
+        job_id: int,
+        max_bytes: int = 50 * 1024,  # 50KB default
+        max_lines: int = 1000
+    ) -> AsyncGenerator[str, None]:
         """
-        Generator that yields existing log lines from file.
-        Used when connecting to a job that already has logs.
+        Generator that yields existing log lines from file with tail optimization.
+
+        For large log files, only reads the last `max_bytes` or `max_lines`
+        to prevent memory issues with huge training logs.
+
+        Args:
+            job_id: Job ID to get logs for
+            max_bytes: Maximum bytes to read from end of file (default 50KB)
+            max_lines: Maximum number of lines to return (default 1000)
+
+        Yields:
+            Log lines from the file
         """
         log_path = self.get_job_log_path(job_id)
 
         if not log_path.exists():
             return
 
-        with open(log_path, "r") as f:
-            for line in f:
-                yield line
+        file_size = log_path.stat().st_size
+
+        # For small files, read everything
+        if file_size <= max_bytes:
+            with open(log_path, "r") as f:
+                for line in f:
+                    yield line
+            return
+
+        # For large files, read only the tail
+        # First, yield a truncation notice
+        yield f"[LOG TRUNCATED - Showing last {max_bytes // 1024}KB of {file_size // 1024}KB]\n"
+        yield "=" * 50 + "\n"
+
+        with open(log_path, "rb") as f:
+            # Seek to position near end of file
+            f.seek(-max_bytes, 2)  # 2 = SEEK_END
+
+            # Read to end
+            content = f.read().decode("utf-8", errors="replace")
+
+            # Skip partial first line (we likely landed mid-line)
+            first_newline = content.find("\n")
+            if first_newline != -1:
+                content = content[first_newline + 1:]
+
+            # Split into lines and limit
+            lines = content.split("\n")
+            if len(lines) > max_lines:
+                yield f"[... {len(lines) - max_lines} more lines above ...]\n"
+                lines = lines[-max_lines:]
+
+            # Yield each line
+            for line in lines:
+                if line:  # Skip empty lines from split
+                    yield line + "\n"
 
     async def git_pull(
         self,
@@ -525,53 +719,78 @@ class ProcessManager:
             # Cleanup
             self.running_processes.pop(job.id, None)
 
-    def validate_path(self, workspace: Path, relative_path: str) -> Path:
+    def validate_path(self, workspace: Path, relative_path: str, allow_external: bool = False) -> Path:
         """
-        Validate and resolve a path within the workspace.
-        Prevents directory traversal attacks.
+        Validate and resolve a path, optionally allowing access outside workspace.
+
+        SECURITY NOTE: For trusted single-user environment, external path access
+        can be enabled to access global datasets, shared models, etc.
 
         Args:
             workspace: The project workspace root
-            relative_path: Relative path from workspace root
+            relative_path: Relative path from workspace root (or absolute if allow_external)
+            allow_external: If True, allows absolute paths and .. navigation outside workspace
 
         Returns:
             Resolved absolute path
 
         Raises:
-            ValueError: If path is outside workspace
+            ValueError: If path doesn't exist (when checking external paths)
         """
         # Handle empty path as workspace root
         if not relative_path or relative_path == ".":
             return workspace
 
+        # Check if it's an absolute path
+        if relative_path.startswith('/'):
+            if allow_external:
+                full_path = Path(relative_path).resolve()
+                if not full_path.exists():
+                    raise ValueError(f"Path does not exist: {full_path}")
+                return full_path
+            else:
+                # For non-external requests, treat absolute paths as relative to workspace
+                relative_path = relative_path.lstrip('/')
+
         # Resolve the full path
         full_path = (workspace / relative_path).resolve()
 
-        # Ensure the path is within the workspace
+        # In trusted mode with allow_external, permit .. navigation
+        if allow_external:
+            if not full_path.exists():
+                raise ValueError(f"Path does not exist: {full_path}")
+            return full_path
+
+        # Default: ensure the path is within the workspace
         try:
             full_path.relative_to(workspace.resolve())
         except ValueError:
-            raise ValueError("Path is outside workspace")
+            raise ValueError("Path is outside workspace (use allow_external=True for external access)")
 
         return full_path
 
-    def list_directory(self, project_id: int, relative_path: str = "") -> List[dict]:
+    def list_directory(self, project_id: int, relative_path: str = "", allow_external: bool = False, show_hidden: bool = False) -> List[dict]:
         """
-        List contents of a directory in project workspace.
+        List contents of a directory, optionally allowing external paths.
+
+        SECURITY NOTE: For trusted single-user environment, external path access
+        allows browsing global datasets, shared models, system directories.
 
         Args:
             project_id: Project ID
-            relative_path: Relative path within workspace
+            relative_path: Relative path within workspace (or absolute if allow_external)
+            allow_external: If True, allows absolute paths and .. navigation
+            show_hidden: If True, shows hidden files (starting with .)
 
         Returns:
             List of FileInfo dictionaries
         """
         workspace = self.get_project_workspace(project_id)
 
-        if not workspace.exists():
+        if not workspace.exists() and not allow_external:
             raise ValueError("Project workspace does not exist")
 
-        target_path = self.validate_path(workspace, relative_path)
+        target_path = self.validate_path(workspace, relative_path, allow_external=allow_external)
 
         if not target_path.exists():
             raise ValueError("Path does not exist")
@@ -581,11 +800,22 @@ class ProcessManager:
 
         files = []
         for item in sorted(target_path.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
-            # Skip hidden files and venv directory
-            if item.name.startswith('.') or item.name == 'venv' or item.name == '__pycache__':
+            # Skip hidden files unless show_hidden is True
+            if not show_hidden and item.name.startswith('.'):
+                continue
+            # Always skip venv and __pycache__ for cleaner listings
+            if item.name == 'venv' or item.name == '__pycache__':
                 continue
 
-            rel_path = str(item.relative_to(workspace))
+            # For external paths, use absolute path; otherwise relative to workspace
+            if allow_external or not str(target_path).startswith(str(workspace)):
+                rel_path = str(item)
+            else:
+                try:
+                    rel_path = str(item.relative_to(workspace))
+                except ValueError:
+                    rel_path = str(item)
+
             is_dir = item.is_dir()
 
             file_info = {
@@ -700,6 +930,56 @@ class ProcessManager:
                 if file_path.is_file():
                     arcname = file_path.relative_to(target_path)
                     zf.write(file_path, arcname)
+
+        return temp_path
+
+    def create_batch_zip_archive(self, project_id: int, relative_paths: List[str]) -> Path:
+        """
+        Create a ZIP archive containing multiple selected files/folders.
+
+        Args:
+            project_id: Project ID
+            relative_paths: List of relative paths to include in the ZIP
+
+        Returns:
+            Path to temporary ZIP file
+        """
+        workspace = self.get_project_workspace(project_id)
+
+        if not workspace.exists():
+            raise ValueError("Project workspace does not exist")
+
+        if not relative_paths:
+            raise ValueError("No paths provided")
+
+        # Create temporary file for ZIP
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        temp_path = Path(temp_file.name)
+        temp_file.close()
+
+        # Create ZIP archive
+        with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for rel_path in relative_paths:
+                target_path = self.validate_path(workspace, rel_path)
+
+                if not target_path.exists():
+                    continue  # Skip non-existent paths
+
+                if target_path.is_file():
+                    # Add single file
+                    arcname = target_path.relative_to(workspace)
+                    zf.write(target_path, arcname)
+                elif target_path.is_dir():
+                    # Add directory recursively
+                    for file_path in target_path.rglob("*"):
+                        # Skip hidden files, venv, and __pycache__
+                        rel_parts = file_path.relative_to(target_path).parts
+                        if any(part.startswith('.') or part == 'venv' or part == '__pycache__' for part in rel_parts):
+                            continue
+
+                        if file_path.is_file():
+                            arcname = file_path.relative_to(workspace)
+                            zf.write(file_path, arcname)
 
         return temp_path
 

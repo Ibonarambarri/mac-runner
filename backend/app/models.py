@@ -37,6 +37,7 @@ class ProjectBase(SQLModel):
     repo_url: str
     install_command: str = "pip install -r requirements.txt"
     run_command: str = "python main.py"
+    run_command_enabled: bool = True  # Toggle to enable/disable run command
 
 
 class Project(ProjectBase, table=True):
@@ -64,6 +65,7 @@ class ProjectUpdate(SQLModel):
     name: Optional[str] = None
     install_command: Optional[str] = None
     run_command: Optional[str] = None
+    run_command_enabled: Optional[bool] = None
 
 
 class ProjectRead(ProjectBase):

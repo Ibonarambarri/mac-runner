@@ -1,15 +1,104 @@
 """
 MacRunner - WebSocket Handlers
-Real-time log streaming via WebSockets.
+Real-time log streaming and status updates via WebSockets.
 """
 
 import asyncio
+from typing import List, Set
 from fastapi import WebSocket, WebSocketDisconnect
 from sqlmodel import Session, select
 
-from .models import Job, JobStatus
+from .models import Job, JobStatus, Project
 from .manager import get_process_manager
 from .database import engine
+
+
+# Global status WebSocket connections
+status_connections: Set[WebSocket] = set()
+
+
+async def broadcast_status_update(event_type: str, data: dict):
+    """
+    Broadcast a status update to all connected status WebSocket clients.
+
+    Args:
+        event_type: Type of event (job_started, job_stopped, job_completed, job_failed, project_updated)
+        data: Event data to send
+    """
+    if not status_connections:
+        return
+
+    message = {
+        "type": event_type,
+        "data": data
+    }
+
+    # Send to all connected clients
+    disconnected = []
+    for ws in status_connections:
+        try:
+            await ws.send_json(message)
+        except Exception:
+            disconnected.append(ws)
+
+    # Clean up disconnected clients
+    for ws in disconnected:
+        status_connections.discard(ws)
+
+
+async def handle_status_websocket(websocket: WebSocket):
+    """
+    WebSocket handler for global status updates.
+
+    Clients connect here to receive real-time notifications when:
+    - Jobs start/stop/complete/fail
+    - Project status changes
+    - New projects are created
+
+    This eliminates the need for polling /projects every 3 seconds.
+    """
+    await websocket.accept()
+    status_connections.add(websocket)
+
+    try:
+        # Send initial state
+        with Session(engine) as session:
+            projects = session.exec(select(Project)).all()
+            await websocket.send_json({
+                "type": "initial_state",
+                "data": {
+                    "projects": [
+                        {
+                            "id": p.id,
+                            "name": p.name,
+                            "status": p.status.value
+                        }
+                        for p in projects
+                    ]
+                }
+            })
+
+        # Keep connection alive and handle incoming messages
+        while True:
+            try:
+                # Wait for messages (primarily for keep-alive)
+                data = await asyncio.wait_for(websocket.receive_json(), timeout=30.0)
+                # Handle ping/pong
+                if data.get("type") == "ping":
+                    await websocket.send_json({"type": "pong"})
+            except asyncio.TimeoutError:
+                # Send periodic ping to keep connection alive
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except:
+                    break
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"Status WebSocket error: {e}")
+    finally:
+        status_connections.discard(websocket)
 
 
 async def stream_logs(websocket: WebSocket, job_id: int):

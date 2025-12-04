@@ -19,11 +19,14 @@ import {
   Check,
   X,
   Trash2,
+  Key,
 } from 'lucide-react';
 
 import { LogViewer } from '../components/LogViewer';
 import { CommandSection } from '../components/CommandSection';
 import { FileExplorer } from '../components/FileExplorer';
+import { EnvEditor } from '../components/EnvEditor';
+import { TensorBoardWidget } from '../components/TensorBoardWidget';
 import { useLogStream } from '../hooks/useLogStream';
 import {
   getProject,
@@ -104,12 +107,13 @@ function ProjectPage() {
   const [selectedJobId, setSelectedJobId] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('actions'); // 'actions' | 'files'
+  const [activeTab, setActiveTab] = useState('actions'); // 'actions' | 'files' | 'secrets'
 
   // Settings modal state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [editInstallValue, setEditInstallValue] = useState('');
   const [editRunValue, setEditRunValue] = useState('');
+  const [editRunEnabled, setEditRunEnabled] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
 
   // Log streaming hook
@@ -191,6 +195,7 @@ function ProjectPage() {
   const handleOpenSettings = () => {
     setEditInstallValue(project.install_command);
     setEditRunValue(project.run_command);
+    setEditRunEnabled(project.run_command_enabled ?? true);
     setIsSettingsOpen(true);
   };
 
@@ -200,6 +205,7 @@ function ProjectPage() {
       await updateProject(projectId, {
         install_command: editInstallValue,
         run_command: editRunValue,
+        run_command_enabled: editRunEnabled,
       });
       setIsSettingsOpen(false);
       await fetchData();
@@ -332,7 +338,7 @@ function ProjectPage() {
           {/* Left column: Tabs + Content */}
           <div className="space-y-6">
             {/* Tab switcher */}
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <button
                 onClick={() => setActiveTab('actions')}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors touch-manipulation ${
@@ -355,6 +361,17 @@ function ProjectPage() {
                 <FolderOpen className="w-4 h-4" />
                 Files
               </button>
+              <button
+                onClick={() => setActiveTab('secrets')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors touch-manipulation ${
+                  activeTab === 'secrets'
+                    ? 'bg-yellow-500/20 text-yellow-400'
+                    : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Key className="w-4 h-4" />
+                Secrets
+              </button>
             </div>
 
             {activeTab === 'actions' ? (
@@ -373,14 +390,16 @@ function ProjectPage() {
                       </button>
                     ) : (
                       <>
-                        <button
-                          onClick={handleRun}
-                          disabled={isCloning}
-                          className="flex items-center gap-2 px-4 py-2.5 bg-terminal-green/20 text-terminal-green rounded-lg hover:bg-terminal-green/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
-                        >
-                          <Play className="w-4 h-4" />
-                          Run
-                        </button>
+                        {project.run_command_enabled && (
+                          <button
+                            onClick={handleRun}
+                            disabled={isCloning}
+                            className="flex items-center gap-2 px-4 py-2.5 bg-terminal-green/20 text-terminal-green rounded-lg hover:bg-terminal-green/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                          >
+                            <Play className="w-4 h-4" />
+                            Run
+                          </button>
+                        )}
                         <button
                           onClick={handleInstall}
                           disabled={isCloning}
@@ -424,6 +443,10 @@ function ProjectPage() {
                   commands={commands}
                   onRunCommand={handleRunCommand}
                   onCommandsChange={fetchData}
+                  onJobStarted={(job) => {
+                    setSelectedJobId(job.id);
+                    clearLogs();
+                  }}
                   disabled={isRunning || isCloning}
                 />
 
@@ -460,8 +483,10 @@ function ProjectPage() {
                             <Clock className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
                           )}
 
-                          <span className={`flex-1 truncate ${selectedJobId === job.id ? '' : getJobTypeColor(job.command_name)}`}>
-                            #{job.id} {job.command_name && `- ${job.command_name}`}
+                          <span className={`flex-1 truncate ${selectedJobId === job.id ? '' : getJobTypeColor(job.command_name)}`} title={job.command_executed || ''}>
+                            #{job.id} {job.command_executed
+                              ? `- ${job.command_executed.length > 40 ? job.command_executed.substring(0, 40) + '...' : job.command_executed}`
+                              : job.command_name && `- ${job.command_name}`}
                           </span>
                           <span className="text-xs text-slate-500 flex-shrink-0">
                             {new Date(job.start_time).toLocaleTimeString()}
@@ -481,9 +506,15 @@ function ProjectPage() {
                   )}
                 </section>
               </>
-            ) : (
+            ) : activeTab === 'files' ? (
               /* Files Tab */
-              <FileExplorer projectId={projectId} />
+              <>
+                <TensorBoardWidget projectId={projectId} />
+                <FileExplorer projectId={projectId} />
+              </>
+            ) : (
+              /* Secrets Tab */
+              <EnvEditor projectId={projectId} />
             )}
           </div>
 
@@ -551,19 +582,34 @@ function ProjectPage() {
                 />
               </div>
 
-              {/* Run command */}
+              {/* Run command toggle */}
               <div>
-                <label className="block text-sm font-medium text-slate-400 mb-2">
-                  Run Command
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editRunEnabled}
+                    onChange={(e) => setEditRunEnabled(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-600 bg-slate-950 text-terminal-green focus:ring-terminal-green focus:ring-offset-slate-900"
+                  />
+                  <span className="text-sm text-slate-300">Enable Run Command</span>
                 </label>
-                <input
-                  type="text"
-                  value={editRunValue}
-                  onChange={(e) => setEditRunValue(e.target.value)}
-                  placeholder="python main.py"
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm font-mono text-slate-200 placeholder-slate-500 focus:outline-none focus:border-terminal-green"
-                />
               </div>
+
+              {/* Run command */}
+              {editRunEnabled && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-2">
+                    Run Command
+                  </label>
+                  <input
+                    type="text"
+                    value={editRunValue}
+                    onChange={(e) => setEditRunValue(e.target.value)}
+                    placeholder="python main.py"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm font-mono text-slate-200 placeholder-slate-500 focus:outline-none focus:border-terminal-green"
+                  />
+                </div>
+              )}
             </div>
 
             {/* Footer */}

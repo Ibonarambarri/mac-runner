@@ -194,6 +194,16 @@ export async function runCommandTemplate(projectId, commandId) {
   });
 }
 
+/**
+ * Run a one-off command (without saving as template)
+ */
+export async function runOneOffCommand(projectId, command) {
+  return apiFetch(`/projects/${projectId}/run-command`, {
+    method: 'POST',
+    body: JSON.stringify({ command }),
+  });
+}
+
 // ============================================================================
 // FILE EXPLORER API
 // ============================================================================
@@ -232,6 +242,15 @@ export function getFolderZipUrl(projectId, path = '') {
   return `${API_BASE}/projects/${projectId}/files/download-zip?path=${encodeURIComponent(path)}`;
 }
 
+/**
+ * Get batch download URL for multiple selected files/folders
+ */
+export function getBatchDownloadUrl(projectId, paths) {
+  const params = new URLSearchParams();
+  paths.forEach(path => params.append('paths', path));
+  return `${API_BASE}/projects/${projectId}/files/download-batch?${params.toString()}`;
+}
+
 // ============================================================================
 // TERMINAL API
 // ============================================================================
@@ -255,6 +274,74 @@ export function getTerminalWebSocketUrl(sessionId) {
 }
 
 // ============================================================================
+// ENVIRONMENT VARIABLES API
+// ============================================================================
+
+/**
+ * Get environment variables for a project
+ */
+export async function getProjectEnv(projectId) {
+  return apiFetch(`/projects/${projectId}/env`);
+}
+
+/**
+ * Save environment variables for a project
+ */
+export async function saveProjectEnv(projectId, variables) {
+  return apiFetch(`/projects/${projectId}/env`, {
+    method: 'PUT',
+    body: JSON.stringify({ variables }),
+  });
+}
+
+// ============================================================================
+// TENSORBOARD API
+// ============================================================================
+
+/**
+ * Detect TensorBoard log directories in a project
+ */
+export async function detectTensorboardDirs(projectId) {
+  return apiFetch(`/projects/${projectId}/tensorboard/detect`);
+}
+
+/**
+ * Start TensorBoard server for a project
+ */
+export async function startTensorboard(projectId, logDir = 'runs', port = 6006) {
+  return apiFetch(`/projects/${projectId}/tensorboard/start?log_dir=${encodeURIComponent(logDir)}&port=${port}`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Stop TensorBoard server
+ */
+export async function stopTensorboard(projectId, logDir = 'runs') {
+  return apiFetch(`/projects/${projectId}/tensorboard/stop?log_dir=${encodeURIComponent(logDir)}`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Get TensorBoard status for a project
+ */
+export async function getTensorboardStatus(projectId) {
+  return apiFetch(`/projects/${projectId}/tensorboard/status`);
+}
+
+// ============================================================================
+// SYSTEM STATUS API
+// ============================================================================
+
+/**
+ * Get system resource status (CPU, memory, GPU)
+ */
+export async function getSystemStatus() {
+  return apiFetch('/system/status');
+}
+
+// ============================================================================
 // WEBSOCKET
 // ============================================================================
 
@@ -265,4 +352,13 @@ export function getLogWebSocketUrl(jobId) {
   const { hostname } = window.location;
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${wsProtocol}//${hostname}:8000/ws/logs/${jobId}`;
+}
+
+/**
+ * Get WebSocket URL for global status updates
+ */
+export function getStatusWebSocketUrl() {
+  const { hostname } = window.location;
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${wsProtocol}//${hostname}:8000/ws/status`;
 }

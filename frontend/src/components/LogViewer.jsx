@@ -1,11 +1,12 @@
-import { useEffect, useRef } from 'react';
-import { Terminal, Wifi, WifiOff, CheckCircle2, XCircle } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Terminal, Wifi, WifiOff, CheckCircle2, XCircle, ChevronDown } from 'lucide-react';
 
 /**
  * LogViewer Component
  *
  * Terminal-style log viewer with:
- * - Auto-scroll on new messages
+ * - Smart auto-scroll (stops when user scrolls up, resumes at bottom)
+ * - "New logs" indicator when auto-scroll is paused
  * - Connection status indicator
  * - Monospace font, dark background
  * - Color coding for stderr
@@ -13,11 +14,22 @@ import { Terminal, Wifi, WifiOff, CheckCircle2, XCircle } from 'lucide-react';
 export function LogViewer({ logs, isConnected, isComplete, error }) {
   const containerRef = useRef(null);
   const autoScrollRef = useRef(true);
+  const [showNewLogsButton, setShowNewLogsButton] = useState(false);
+  const prevLogsLengthRef = useRef(logs.length);
+
+  // Track when new logs arrive while not at bottom
+  useEffect(() => {
+    if (logs.length > prevLogsLengthRef.current && !autoScrollRef.current) {
+      setShowNewLogsButton(true);
+    }
+    prevLogsLengthRef.current = logs.length;
+  }, [logs.length]);
 
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
     if (autoScrollRef.current && containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      setShowNewLogsButton(false);
     }
   }, [logs]);
 
@@ -28,6 +40,19 @@ export function LogViewer({ logs, isConnected, isComplete, error }) {
     const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
     const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
     autoScrollRef.current = isAtBottom;
+
+    if (isAtBottom) {
+      setShowNewLogsButton(false);
+    }
+  };
+
+  // Scroll to bottom and re-enable auto-scroll
+  const scrollToBottom = () => {
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      autoScrollRef.current = true;
+      setShowNewLogsButton(false);
+    }
   };
 
   // Format log line with color coding
@@ -90,28 +115,41 @@ export function LogViewer({ logs, isConnected, isComplete, error }) {
       </div>
 
       {/* Log content */}
-      <div
-        ref={containerRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-auto p-3 sm:p-4 font-mono text-xs sm:text-sm overscroll-contain touch-pan-y"
-        style={{ WebkitOverflowScrolling: 'touch' }}
-      >
-        {logs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-slate-600">
-            <Terminal className="w-10 h-10 sm:w-12 sm:h-12 mb-4 opacity-50" />
-            <p>Waiting for output...</p>
-            {!isConnected && !error && (
-              <p className="text-xs mt-2">Run a job to see logs here</p>
-            )}
-          </div>
-        ) : (
-          <>
-            {logs.map((line, index) => formatLine(line, index))}
-            {/* Blinking cursor when connected and not complete */}
-            {isConnected && !isComplete && (
-              <span className="terminal-cursor text-terminal-green" />
-            )}
-          </>
+      <div className="relative flex-1">
+        <div
+          ref={containerRef}
+          onScroll={handleScroll}
+          className="h-full overflow-auto p-3 sm:p-4 font-mono text-xs sm:text-sm overscroll-contain touch-pan-y"
+          style={{ WebkitOverflowScrolling: 'touch' }}
+        >
+          {logs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-slate-600">
+              <Terminal className="w-10 h-10 sm:w-12 sm:h-12 mb-4 opacity-50" />
+              <p>Waiting for output...</p>
+              {!isConnected && !error && (
+                <p className="text-xs mt-2">Run a job to see logs here</p>
+              )}
+            </div>
+          ) : (
+            <>
+              {logs.map((line, index) => formatLine(line, index))}
+              {/* Blinking cursor when connected and not complete */}
+              {isConnected && !isComplete && (
+                <span className="terminal-cursor text-terminal-green" />
+              )}
+            </>
+          )}
+        </div>
+
+        {/* New logs indicator button */}
+        {showNewLogsButton && (
+          <button
+            onClick={scrollToBottom}
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 bg-terminal-green text-slate-950 rounded-full text-sm font-medium shadow-lg hover:bg-terminal-green/90 transition-all animate-bounce"
+          >
+            <ChevronDown className="w-4 h-4" />
+            New logs
+          </button>
         )}
       </div>
     </div>
