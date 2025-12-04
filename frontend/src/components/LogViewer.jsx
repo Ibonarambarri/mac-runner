@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Terminal, Wifi, WifiOff, CheckCircle2, XCircle, ChevronDown } from 'lucide-react';
+import { Terminal, Wifi, WifiOff, CheckCircle2, XCircle, ChevronDown, X } from 'lucide-react';
 
 /**
  * LogViewer Component
@@ -11,7 +11,7 @@ import { Terminal, Wifi, WifiOff, CheckCircle2, XCircle, ChevronDown } from 'luc
  * - Monospace font, dark background
  * - Color coding for stderr
  */
-export function LogViewer({ logs, isConnected, isComplete, error }) {
+export function LogViewer({ logs, isConnected, isComplete, error, jobId, onClear }) {
   const containerRef = useRef(null);
   const autoScrollRef = useRef(true);
   const [showNewLogsButton, setShowNewLogsButton] = useState(false);
@@ -84,11 +84,13 @@ export function LogViewer({ logs, isConnected, isComplete, error }) {
       <div className="flex items-center justify-between px-4 py-2 bg-slate-900/50 border-b border-slate-800">
         <div className="flex items-center gap-2">
           <Terminal className="w-4 h-4 text-terminal-green" />
-          <span className="text-sm font-medium text-slate-400">Output</span>
+          <span className="text-sm font-medium text-slate-400">
+            {jobId ? `Job #${jobId}` : 'Output'}
+          </span>
         </div>
 
-        {/* Status indicator */}
-        <div className="flex items-center gap-2">
+        {/* Status indicator and clear button */}
+        <div className="flex items-center gap-3">
           {error ? (
             <div className="flex items-center gap-1.5 text-red-400">
               <XCircle className="w-4 h-4" />
@@ -110,6 +112,17 @@ export function LogViewer({ logs, isConnected, isComplete, error }) {
               <WifiOff className="w-4 h-4" />
               <span className="text-xs">Disconnected</span>
             </div>
+          )}
+
+          {/* Clear button */}
+          {jobId && onClear && (
+            <button
+              onClick={onClear}
+              className="p-1 text-slate-500 hover:text-slate-300 hover:bg-slate-800 rounded transition-colors"
+              title="Clear"
+            >
+              <X className="w-4 h-4" />
+            </button>
           )}
         </div>
       </div>

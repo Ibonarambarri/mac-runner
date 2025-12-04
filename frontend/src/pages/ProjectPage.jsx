@@ -684,30 +684,17 @@ function ProjectPage() {
           {/* Right column: Log Viewer - HIDDEN when Files tab is active */}
           {activeTab !== 'files' && (
             <div className="lg:sticky lg:top-6 h-[calc(100vh-200px)]">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-semibold text-slate-400">
-                  {selectedJobId ? `Job #${selectedJobId}` : 'Output'}
-                </h2>
-                {selectedJobId && (
-                  <button
-                    onClick={() => {
-                      setSelectedJobId(null);
-                      clearLogs();
-                    }}
-                    className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-              <div className="h-full">
-                <LogViewer
-                  logs={logs}
-                  isConnected={isConnected}
-                  isComplete={isComplete}
-                  error={wsError}
-                />
-              </div>
+              <LogViewer
+                logs={logs}
+                isConnected={isConnected}
+                isComplete={isComplete}
+                error={wsError}
+                jobId={selectedJobId}
+                onClear={() => {
+                  setSelectedJobId(null);
+                  clearLogs();
+                }}
+              />
             </div>
           )}
         </div>
