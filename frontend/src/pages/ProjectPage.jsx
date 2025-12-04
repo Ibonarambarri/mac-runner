@@ -632,7 +632,7 @@ function ProjectPage() {
                           {job.status !== 'running' && (
                             <button
                               onClick={(e) => handleDeleteJob(job.id, e)}
-                              className="p-1 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
+                              className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all flex-shrink-0 touch-manipulation"
                               title="Delete job"
                             >
                               <Trash2 className="w-3.5 h-3.5" />

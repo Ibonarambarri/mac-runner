@@ -119,8 +119,7 @@ export function LogViewer({ logs, isConnected, isComplete, error }) {
         <div
           ref={containerRef}
           onScroll={handleScroll}
-          className="h-full overflow-auto p-3 sm:p-4 font-mono text-xs sm:text-sm overscroll-contain touch-pan-y"
-          style={{ WebkitOverflowScrolling: 'touch' }}
+          className="h-full overflow-auto p-3 sm:p-4 font-mono text-xs sm:text-sm no-bounce touch-pan-y"
         >
           {logs.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-slate-600">

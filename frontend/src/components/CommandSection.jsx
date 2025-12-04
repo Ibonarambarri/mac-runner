@@ -202,11 +202,11 @@ export function CommandSection({
                 /* Display mode */
                 <>
                   <code className="flex-1 text-sm text-slate-300 font-mono truncate">{cmd.command}</code>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                     <button
                       onClick={() => onRunCommand(cmd.id)}
                       disabled={disabled}
-                      className="p-1.5 text-terminal-green hover:bg-terminal-green/20 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="p-2 text-terminal-green hover:bg-terminal-green/20 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
                       title="Run command"
                     >
                       <Play className="w-4 h-4" />
@@ -214,7 +214,7 @@ export function CommandSection({
                     <button
                       onClick={() => handleStartEdit(cmd)}
                       disabled={disabled}
-                      className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
                       title="Edit command"
                     >
                       <Pencil className="w-4 h-4" />
@@ -222,7 +222,7 @@ export function CommandSection({
                     <button
                       onClick={() => handleDelete(cmd.id, cmd.command)}
                       disabled={disabled}
-                      className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
                       title="Delete command"
                     >
                       <Trash2 className="w-4 h-4" />

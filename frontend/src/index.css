@@ -96,3 +96,9 @@ button {
 .status-pulse {
   animation: status-pulse 2s ease-in-out infinite;
 }
+
+/* Prevent iOS rubber-banding on scrollable containers */
+.no-bounce {
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}

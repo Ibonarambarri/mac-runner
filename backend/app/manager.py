@@ -6,11 +6,15 @@ CRITICAL: Uses PYTHONUNBUFFERED=1 to ensure real-time log streaming.
 """
 
 import asyncio
+import fcntl
 import os
+import pty
 import re
 import signal
 import shlex
 import shutil
+import struct
+import termios
 import zipfile
 import tempfile
 from datetime import datetime, timezone
@@ -53,6 +57,233 @@ def sanitize_command(command: str) -> str:
     return command
 
 
+class PTYSession:
+    """
+    Manages a persistent PTY (pseudo-terminal) session.
+
+    This allows for stateful shell interactions where commands like `cd`
+    persist across multiple inputs, and supports interactive programs
+    like vim, htop, etc.
+    """
+
+    def __init__(self, session_id: int):
+        self.session_id = session_id
+        self.master_fd: Optional[int] = None
+        self.slave_fd: Optional[int] = None
+        self.pid: Optional[int] = None
+        self.closed = False
+        self._output_queues: List[asyncio.Queue] = []
+        self._reader_task: Optional[asyncio.Task] = None
+
+    def _detect_shell(self) -> str:
+        """Detect available shell, preferring zsh on macOS."""
+        for shell in ['/bin/zsh', '/bin/bash', '/bin/sh']:
+            if os.path.exists(shell):
+                return shell
+        return '/bin/sh'
+
+    def start(self) -> bool:
+        """
+        Start the PTY session by forking a new process.
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.master_fd is not None:
+            return True  # Already started
+
+        try:
+            # Create PTY pair
+            self.master_fd, self.slave_fd = pty.openpty()
+
+            # Fork process
+            self.pid = os.fork()
+
+            if self.pid == 0:
+                # Child process
+                os.close(self.master_fd)
+
+                # Create new session and set controlling terminal
+                os.setsid()
+
+                # Set slave as controlling terminal
+                fcntl.ioctl(self.slave_fd, termios.TIOCSCTTY, 0)
+
+                # Redirect stdio to slave
+                os.dup2(self.slave_fd, 0)  # stdin
+                os.dup2(self.slave_fd, 1)  # stdout
+                os.dup2(self.slave_fd, 2)  # stderr
+
+                if self.slave_fd > 2:
+                    os.close(self.slave_fd)
+
+                # Set up environment
+                env = os.environ.copy()
+                env['TERM'] = 'xterm-256color'
+                env['COLORTERM'] = 'truecolor'
+                env['LANG'] = 'en_US.UTF-8'
+
+                # Execute shell
+                shell = self._detect_shell()
+                os.execve(shell, [shell, '-l'], env)
+
+            else:
+                # Parent process
+                os.close(self.slave_fd)
+                self.slave_fd = None
+
+                # Set master to non-blocking
+                flags = fcntl.fcntl(self.master_fd, fcntl.F_GETFL)
+                fcntl.fcntl(self.master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+                # Set initial size (80x24)
+                self.resize(80, 24)
+
+                return True
+
+        except Exception as e:
+            print(f"PTY start error: {e}")
+            self.close()
+            return False
+
+        return False
+
+    def resize(self, cols: int, rows: int) -> bool:
+        """
+        Resize the PTY window.
+
+        Args:
+            cols: Number of columns
+            rows: Number of rows
+
+        Returns:
+            True if successful
+        """
+        if self.master_fd is None:
+            return False
+
+        try:
+            # Pack the window size struct: rows, cols, xpixel, ypixel
+            winsize = struct.pack('HHHH', rows, cols, 0, 0)
+            fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, winsize)
+            return True
+        except Exception as e:
+            print(f"PTY resize error: {e}")
+            return False
+
+    def write(self, data: bytes) -> bool:
+        """
+        Write data to the PTY master fd.
+
+        Args:
+            data: Raw bytes to write
+
+        Returns:
+            True if successful
+        """
+        if self.master_fd is None or self.closed:
+            return False
+
+        try:
+            os.write(self.master_fd, data)
+            return True
+        except Exception as e:
+            print(f"PTY write error: {e}")
+            return False
+
+    def read(self, size: int = 4096) -> Optional[bytes]:
+        """
+        Read data from the PTY master fd (non-blocking).
+
+        Args:
+            size: Maximum bytes to read
+
+        Returns:
+            Bytes read, or None if no data available
+        """
+        if self.master_fd is None or self.closed:
+            return None
+
+        try:
+            return os.read(self.master_fd, size)
+        except BlockingIOError:
+            return None
+        except OSError as e:
+            if e.errno == 5:  # EIO - child process terminated
+                self.closed = True
+            return None
+
+    def subscribe(self, queue: asyncio.Queue) -> None:
+        """Subscribe a queue to receive output."""
+        self._output_queues.append(queue)
+
+    def unsubscribe(self, queue: asyncio.Queue) -> None:
+        """Unsubscribe a queue from output."""
+        try:
+            self._output_queues.remove(queue)
+        except ValueError:
+            pass
+
+    async def broadcast(self, data: bytes) -> None:
+        """Broadcast data to all subscribed queues."""
+        for queue in self._output_queues:
+            try:
+                await queue.put(data)
+            except Exception:
+                pass
+
+    def close(self) -> None:
+        """Close the PTY session and terminate the child process."""
+        self.closed = True
+
+        if self._reader_task:
+            self._reader_task.cancel()
+            self._reader_task = None
+
+        if self.master_fd is not None:
+            try:
+                os.close(self.master_fd)
+            except OSError:
+                pass
+            self.master_fd = None
+
+        if self.slave_fd is not None:
+            try:
+                os.close(self.slave_fd)
+            except OSError:
+                pass
+            self.slave_fd = None
+
+        if self.pid is not None:
+            try:
+                os.kill(self.pid, signal.SIGTERM)
+                # Give it a moment to terminate gracefully
+                try:
+                    os.waitpid(self.pid, os.WNOHANG)
+                except ChildProcessError:
+                    pass
+            except ProcessLookupError:
+                pass
+            except Exception:
+                pass
+            self.pid = None
+
+    def is_alive(self) -> bool:
+        """Check if the PTY session is still alive."""
+        if self.closed or self.pid is None:
+            return False
+
+        try:
+            pid, status = os.waitpid(self.pid, os.WNOHANG)
+            if pid == self.pid:
+                self.closed = True
+                return False
+            return True
+        except ChildProcessError:
+            self.closed = True
+            return False
+
+
 class ProcessManager:
     """
     Manages project workspaces, git operations, and subprocess execution.
@@ -92,6 +323,9 @@ class ProcessManager:
 
         # Terminal output queues (session_id -> list of connected queues)
         self.terminal_queues: Dict[int, list[asyncio.Queue]] = defaultdict(list)
+
+        # PTY sessions (session_id -> PTYSession)
+        self.pty_sessions: Dict[int, PTYSession] = {}
 
         # Job concurrency control
         self.max_concurrent_jobs = max_concurrent_jobs
@@ -1146,31 +1380,51 @@ class ProcessManager:
         return temp_path
 
     # =========================================================================
-    # GENERAL TERMINAL METHODS
+    # PTY TERMINAL METHODS (Persistent Shell Sessions)
     # =========================================================================
 
     def create_terminal_session(self) -> int:
         """
-        Create a new terminal session.
+        Create a new PTY terminal session.
 
         Returns:
             Session ID
         """
         self._terminal_session_counter += 1
-        return self._terminal_session_counter
+        session_id = self._terminal_session_counter
+
+        # Create and start PTY session
+        pty_session = PTYSession(session_id)
+        if pty_session.start():
+            self.pty_sessions[session_id] = pty_session
+        else:
+            raise RuntimeError("Failed to start PTY session")
+
+        return session_id
+
+    def get_pty_session(self, session_id: int) -> Optional[PTYSession]:
+        """Get a PTY session by ID."""
+        return self.pty_sessions.get(session_id)
 
     def subscribe_to_terminal(self, session_id: int) -> asyncio.Queue:
         """
         Subscribe to terminal output for a session.
 
-        Returns an asyncio.Queue that will receive output lines.
+        Returns an asyncio.Queue that will receive raw bytes.
         """
         queue = asyncio.Queue()
+        pty_session = self.pty_sessions.get(session_id)
+        if pty_session:
+            pty_session.subscribe(queue)
         self.terminal_queues[session_id].append(queue)
         return queue
 
     def unsubscribe_from_terminal(self, session_id: int, queue: asyncio.Queue) -> None:
         """Remove a queue from the terminal subscribers."""
+        pty_session = self.pty_sessions.get(session_id)
+        if pty_session:
+            pty_session.unsubscribe(queue)
+
         if session_id in self.terminal_queues:
             try:
                 self.terminal_queues[session_id].remove(queue)
@@ -1181,72 +1435,114 @@ class ProcessManager:
             if not self.terminal_queues[session_id]:
                 del self.terminal_queues[session_id]
 
+    def close_terminal_session(self, session_id: int) -> None:
+        """Close a PTY terminal session."""
+        pty_session = self.pty_sessions.pop(session_id, None)
+        if pty_session:
+            pty_session.close()
+
+        # Clean up queues
+        if session_id in self.terminal_queues:
+            del self.terminal_queues[session_id]
+
+    def write_to_terminal(self, session_id: int, data: bytes) -> bool:
+        """
+        Write raw bytes to the PTY terminal.
+
+        Args:
+            session_id: Terminal session ID
+            data: Raw bytes to write
+
+        Returns:
+            True if successful
+        """
+        pty_session = self.pty_sessions.get(session_id)
+        if pty_session:
+            return pty_session.write(data)
+        return False
+
+    def resize_terminal(self, session_id: int, cols: int, rows: int) -> bool:
+        """
+        Resize the PTY terminal window.
+
+        Args:
+            session_id: Terminal session ID
+            cols: Number of columns
+            rows: Number of rows
+
+        Returns:
+            True if successful
+        """
+        pty_session = self.pty_sessions.get(session_id)
+        if pty_session:
+            return pty_session.resize(cols, rows)
+        return False
+
     async def execute_terminal_command(
         self,
         session_id: int,
         command: str
     ) -> None:
         """
-        Execute a command in the general terminal workspace.
+        Execute a command in the general terminal workspace (legacy method).
+
+        This method is kept for backward compatibility but the PTY-based
+        approach should be used instead via write_to_terminal.
 
         Args:
             session_id: Terminal session ID
             command: Command to execute
         """
-        # Environment variables
-        env = os.environ.copy()
-        env["PYTHONUNBUFFERED"] = "1"
-        env["FORCE_COLOR"] = "1"
+        # For backward compatibility, write the command to PTY
+        pty_session = self.pty_sessions.get(session_id)
+        if pty_session:
+            # Add newline to execute command
+            pty_session.write((command + '\n').encode('utf-8'))
+        else:
+            # Fallback to old behavior if no PTY session
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
+            env["FORCE_COLOR"] = "1"
 
-        try:
-            # Broadcast the command being executed
-            cmd_msg = f"$ {command}\n"
-            for queue in self.terminal_queues[session_id]:
-                await queue.put({"type": "output", "data": cmd_msg})
+            try:
+                cmd_msg = f"$ {command}\n"
+                for queue in self.terminal_queues[session_id]:
+                    await queue.put({"type": "output", "data": cmd_msg})
 
-            # Create subprocess
-            process = await asyncio.create_subprocess_shell(
-                command,
-                cwd=self.terminal_workspace,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-                start_new_session=True
-            )
+                process = await asyncio.create_subprocess_shell(
+                    command,
+                    cwd=self.terminal_workspace,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=env,
+                    start_new_session=True
+                )
 
-            # Process stdout and stderr concurrently
-            async def read_stream(stream, is_stderr=False):
-                """Read stream line by line and broadcast to queues."""
-                while True:
-                    line = await stream.readline()
-                    if not line:
-                        break
+                async def read_stream(stream, is_stderr=False):
+                    while True:
+                        line = await stream.readline()
+                        if not line:
+                            break
+                        decoded_line = line.decode("utf-8", errors="replace")
+                        prefix = "[stderr] " if is_stderr else ""
+                        formatted_line = f"{prefix}{decoded_line}"
+                        for queue in self.terminal_queues[session_id]:
+                            await queue.put({"type": "output", "data": formatted_line})
 
-                    decoded_line = line.decode("utf-8", errors="replace")
-                    prefix = "[stderr] " if is_stderr else ""
-                    formatted_line = f"{prefix}{decoded_line}"
+                await asyncio.gather(
+                    read_stream(process.stdout),
+                    read_stream(process.stderr, is_stderr=True)
+                )
 
-                    # Broadcast to all connected queues
-                    for queue in self.terminal_queues[session_id]:
-                        await queue.put({"type": "output", "data": formatted_line})
+                return_code = await process.wait()
 
-            # Run both stream readers concurrently
-            await asyncio.gather(
-                read_stream(process.stdout),
-                read_stream(process.stderr, is_stderr=True)
-            )
+                for queue in self.terminal_queues[session_id]:
+                    await queue.put({"type": "exit", "code": return_code})
 
-            # Wait for process to complete
-            return_code = await process.wait()
-
-            # Send exit message
-            for queue in self.terminal_queues[session_id]:
-                await queue.put({"type": "exit", "code": return_code})
-
-        except Exception as e:
-            error_msg = f"[ERROR] {str(e)}\n"
-            for queue in self.terminal_queues[session_id]:
-                await queue.put({"type": "error", "data": error_msg})
+            except Exception as e:
+                error_msg = f"[ERROR] {str(e)}\n"
+                for queue in self.terminal_queues[session_id]:
+                    await queue.put({"type": "error", "data": error_msg})
 
 
 # Global process manager instance

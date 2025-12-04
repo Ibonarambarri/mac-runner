@@ -61,10 +61,10 @@ export function ProjectCard({ project, onClick, onDelete }) {
             </div>
           </div>
 
-          {/* Delete button */}
+          {/* Delete button - always visible on mobile */}
           <button
             onClick={handleDelete}
-            className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+            className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors opacity-100 md:opacity-0 md:group-hover:opacity-100 touch-manipulation"
           >
             <Trash2 className="w-4 h-4" />
           </button>

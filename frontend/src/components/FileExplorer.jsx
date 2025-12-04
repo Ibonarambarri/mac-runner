@@ -200,7 +200,7 @@ export function FileExplorer({ projectId }) {
       </div>
 
       {/* File list */}
-      <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 400px)', minHeight: '300px' }}>
+      <div className="overflow-y-auto no-bounce" style={{ maxHeight: 'calc(100vh - 400px)', minHeight: '300px' }}>
         {loading ? (
           <div className="flex items-center justify-center p-8">
             <Loader2 className="w-6 h-6 animate-spin text-terminal-green" />
@@ -267,7 +267,7 @@ export function FileExplorer({ projectId }) {
                         <a
                           href={getFileDownloadUrl(projectId, file.path)}
                           onClick={(e) => e.stopPropagation()}
-                          className="p-1 text-slate-500 hover:text-slate-200 opacity-0 group-hover:opacity-100 transition-opacity touch-manipulation"
+                          className="p-2 text-slate-500 hover:text-slate-200 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity touch-manipulation"
                           title="Download"
                         >
                           <Download className="w-3.5 h-3.5" />

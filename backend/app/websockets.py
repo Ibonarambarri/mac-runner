@@ -4,6 +4,7 @@ Real-time log streaming and status updates via WebSockets.
 """
 
 import asyncio
+import json
 from typing import List, Set
 from fastapi import WebSocket, WebSocketDisconnect
 from sqlmodel import Session, select
@@ -212,13 +213,12 @@ async def stream_logs(websocket: WebSocket, job_id: int):
 
 async def handle_terminal(websocket: WebSocket, session_id: int):
     """
-    WebSocket handler for interactive terminal.
+    WebSocket handler for interactive PTY terminal.
 
-    Protocol:
-    - Client sends: {"type": "command", "data": "command to execute"}
-    - Server sends: {"type": "output", "data": "output line"}
-    - Server sends: {"type": "exit", "code": 0}
-    - Server sends: {"type": "error", "data": "error message"}
+    Protocol (binary mode for raw terminal I/O):
+    - Client sends binary: Raw terminal input (keystrokes)
+    - Client sends JSON: {"type": "resize", "cols": 80, "rows": 24}
+    - Server sends binary: Raw terminal output (including ANSI escape codes)
 
     Args:
         websocket: FastAPI WebSocket connection
@@ -227,46 +227,97 @@ async def handle_terminal(websocket: WebSocket, session_id: int):
     await websocket.accept()
 
     manager = get_process_manager()
+    pty_session = manager.get_pty_session(session_id)
+
+    if not pty_session or not pty_session.is_alive():
+        await websocket.send_bytes(b"Error: PTY session not found or not alive\r\n")
+        await websocket.close()
+        return
+
     queue = manager.subscribe_to_terminal(session_id)
+    reader_task = None
 
-    # Task to send output from queue to websocket
-    async def send_output():
-        try:
-            while True:
-                msg = await queue.get()
-                await websocket.send_json(msg)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            print(f"Error sending terminal output: {e}")
+    # Task to read from PTY and send to WebSocket
+    async def read_pty_output():
+        """Read PTY output using event loop and send to WebSocket."""
+        loop = asyncio.get_event_loop()
 
-    # Start the output sender task
-    output_task = asyncio.create_task(send_output())
+        while not pty_session.closed:
+            try:
+                # Use loop.run_in_executor to read in a thread-safe way
+                data = await loop.run_in_executor(
+                    None,
+                    lambda: pty_session.read(4096)
+                )
+
+                if data:
+                    # Send raw bytes to WebSocket
+                    await websocket.send_bytes(data)
+                    # Also broadcast to queue for other listeners
+                    await pty_session.broadcast(data)
+                else:
+                    # No data available, small delay
+                    await asyncio.sleep(0.01)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                if not pty_session.closed:
+                    print(f"PTY read error: {e}")
+                break
+
+    # Start the PTY reader task
+    reader_task = asyncio.create_task(read_pty_output())
 
     try:
-        # Send welcome message
-        await websocket.send_json({
-            "type": "output",
-            "data": f"Terminal session {session_id} started.\nWorking directory: {manager.terminal_workspace}\n\n"
-        })
-
         while True:
-            # Receive command from client
-            data = await websocket.receive_json()
+            # Receive message from client (can be binary or text)
+            message = await websocket.receive()
 
-            if data.get("type") == "command":
-                command = data.get("data", "").strip()
-                if command:
-                    # Execute command asynchronously
-                    await manager.execute_terminal_command(session_id, command)
+            if message["type"] == "websocket.disconnect":
+                break
+
+            if "bytes" in message:
+                # Binary data - raw terminal input
+                data = message["bytes"]
+                pty_session.write(data)
+
+            elif "text" in message:
+                # JSON message - likely resize or other control
+                try:
+                    data = json.loads(message["text"])
+
+                    if data.get("type") == "resize":
+                        cols = data.get("cols", 80)
+                        rows = data.get("rows", 24)
+                        manager.resize_terminal(session_id, cols, rows)
+
+                    elif data.get("type") == "input":
+                        # Legacy text input support
+                        text = data.get("data", "")
+                        if text:
+                            pty_session.write(text.encode("utf-8"))
+
+                except json.JSONDecodeError:
+                    # Treat as raw text input
+                    pty_session.write(message["text"].encode("utf-8"))
 
     except WebSocketDisconnect:
         print(f"Terminal WebSocket disconnected for session {session_id}")
     except Exception as e:
         print(f"Terminal WebSocket error for session {session_id}: {e}")
     finally:
-        output_task.cancel()
+        if reader_task:
+            reader_task.cancel()
+            try:
+                await reader_task
+            except asyncio.CancelledError:
+                pass
+
         manager.unsubscribe_from_terminal(session_id, queue)
+        # Close the PTY session when WebSocket disconnects
+        manager.close_terminal_session(session_id)
+
         try:
             await websocket.close()
         except:
