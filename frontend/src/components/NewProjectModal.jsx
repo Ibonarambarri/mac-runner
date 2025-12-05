@@ -1,10 +1,31 @@
 import { useState } from 'react';
-import { X, GitBranch, Loader2 } from 'lucide-react';
+import { X, GitBranch, Loader2, ChevronDown } from 'lucide-react';
+
+/**
+ * Available Python versions for selection
+ */
+const PYTHON_VERSIONS = [
+  { value: '', label: 'System Default' },
+  { value: '3.12', label: 'Python 3.12' },
+  { value: '3.11', label: 'Python 3.11' },
+  { value: '3.10', label: 'Python 3.10' },
+  { value: '3.9', label: 'Python 3.9' },
+  { value: '3.8', label: 'Python 3.8' },
+];
+
+/**
+ * Environment type options
+ */
+const ENVIRONMENT_TYPES = [
+  { value: 'venv', label: 'venv', description: 'Python built-in virtual environment' },
+  { value: 'conda', label: 'Conda', description: 'Conda/Mamba environment (requires conda installed)' },
+];
 
 /**
  * NewProjectModal Component
  *
  * Modal for creating a new project from a GitHub URL.
+ * Supports selecting environment type (venv/conda) and Python version.
  */
 export function NewProjectModal({ isOpen, onClose, onSubmit, isLoading }) {
   const [name, setName] = useState('');
@@ -12,6 +33,8 @@ export function NewProjectModal({ isOpen, onClose, onSubmit, isLoading }) {
   const [installCommand, setInstallCommand] = useState('pip install -r requirements.txt');
   const [runCommand, setRunCommand] = useState('python main.py');
   const [runCommandEnabled, setRunCommandEnabled] = useState(true);
+  const [environmentType, setEnvironmentType] = useState('venv');
+  const [pythonVersion, setPythonVersion] = useState('');
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -21,6 +44,8 @@ export function NewProjectModal({ isOpen, onClose, onSubmit, isLoading }) {
       install_command: installCommand,
       run_command: runCommand,
       run_command_enabled: runCommandEnabled,
+      environment_type: environmentType,
+      python_version: pythonVersion || null,
     });
   };
 
@@ -35,6 +60,18 @@ export function NewProjectModal({ isOpen, onClose, onSubmit, isLoading }) {
     }
   };
 
+  // Reset form when modal closes
+  const handleClose = () => {
+    setName('');
+    setRepoUrl('');
+    setInstallCommand('pip install -r requirements.txt');
+    setRunCommand('python main.py');
+    setRunCommandEnabled(true);
+    setEnvironmentType('venv');
+    setPythonVersion('');
+    onClose();
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -42,7 +79,7 @@ export function NewProjectModal({ isOpen, onClose, onSubmit, isLoading }) {
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-        onClick={onClose}
+        onClick={handleClose}
       />
 
       {/* Modal */}
@@ -56,7 +93,7 @@ export function NewProjectModal({ isOpen, onClose, onSubmit, isLoading }) {
             <h2 className="text-lg font-semibold text-slate-100">New Project</h2>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-3 -mr-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors touch-manipulation"
           >
             <X className="w-5 h-5" />
@@ -94,6 +131,59 @@ export function NewProjectModal({ isOpen, onClose, onSubmit, isLoading }) {
             />
           </div>
 
+          {/* Environment Configuration Section */}
+          <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700 space-y-4">
+            <h3 className="text-sm font-medium text-slate-300 flex items-center gap-2">
+              <span className="text-lg">🐍</span>
+              Python Environment
+            </h3>
+
+            {/* Environment Type */}
+            <div className="grid grid-cols-2 gap-3">
+              {ENVIRONMENT_TYPES.map((type) => (
+                <button
+                  key={type.value}
+                  type="button"
+                  onClick={() => setEnvironmentType(type.value)}
+                  className={`px-4 py-3 rounded-lg border text-left transition-all ${
+                    environmentType === type.value
+                      ? 'border-terminal-green bg-terminal-green/10 text-terminal-green'
+                      : 'border-slate-600 bg-slate-900 text-slate-400 hover:border-slate-500'
+                  }`}
+                >
+                  <div className="font-medium">{type.label}</div>
+                  <div className="text-xs opacity-70 mt-0.5">{type.description}</div>
+                </button>
+              ))}
+            </div>
+
+            {/* Python Version */}
+            <div>
+              <label className="block text-sm text-slate-400 mb-2">
+                Python Version
+              </label>
+              <div className="relative">
+                <select
+                  value={pythonVersion}
+                  onChange={(e) => setPythonVersion(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:border-terminal-green transition-colors appearance-none cursor-pointer"
+                >
+                  {PYTHON_VERSIONS.map((version) => (
+                    <option key={version.value} value={version.value}>
+                      {version.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 pointer-events-none" />
+              </div>
+              <p className="mt-1.5 text-xs text-slate-500">
+                {environmentType === 'conda'
+                  ? 'Conda will install the specified Python version automatically'
+                  : 'Requires the Python version to be installed on your system'}
+              </p>
+            </div>
+          </div>
+
           {/* Install Command */}
           <div>
             <label className="block text-sm text-slate-300 mb-2">
@@ -107,7 +197,7 @@ export function NewProjectModal({ isOpen, onClose, onSubmit, isLoading }) {
               className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-lg text-slate-200 placeholder-slate-500 font-mono text-sm focus:outline-none focus:border-terminal-green transition-colors"
             />
             <p className="mt-1 text-xs text-slate-500">
-              Command to install dependencies (runs in project venv)
+              Command to install dependencies (runs in project environment)
             </p>
           </div>
 
@@ -147,7 +237,7 @@ export function NewProjectModal({ isOpen, onClose, onSubmit, isLoading }) {
           <div className="flex gap-3 pt-2 pb-safe">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               className="flex-1 px-4 py-3.5 sm:py-3 bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition-colors touch-manipulation"
             >
               Cancel

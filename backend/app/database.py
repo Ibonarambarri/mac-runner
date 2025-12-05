@@ -51,6 +51,16 @@ def run_migrations():
         cursor.execute("ALTER TABLE project ADD COLUMN default_notebook TEXT DEFAULT NULL")
         conn.commit()
 
+    if "environment_type" not in columns:
+        print("Migration: Adding environment_type column to project table")
+        cursor.execute("ALTER TABLE project ADD COLUMN environment_type TEXT DEFAULT 'venv'")
+        conn.commit()
+
+    if "python_version" not in columns:
+        print("Migration: Adding python_version column to project table")
+        cursor.execute("ALTER TABLE project ADD COLUMN python_version TEXT DEFAULT NULL")
+        conn.commit()
+
     conn.close()
 
 

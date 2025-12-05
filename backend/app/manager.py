@@ -24,7 +24,7 @@ from collections import defaultdict
 
 from sqlmodel import Session
 
-from .models import Project, Job, ProjectStatus, JobStatus
+from .models import Project, Job, ProjectStatus, JobStatus, EnvironmentType
 
 
 def validate_repo_url(url: str) -> bool:
@@ -38,6 +38,87 @@ def validate_repo_url(url: str) -> bool:
     ssh_pattern = r'^git@[\w.-]+:[\w.-]+/[\w.-]+(?:\.git)?$'
 
     return bool(re.match(https_pattern, url) or re.match(ssh_pattern, url))
+
+
+def find_python_executable(version: Optional[str] = None) -> tuple[str, str]:
+    """
+    Find the Python executable for a given version.
+
+    Args:
+        version: Python version string (e.g., "3.9", "3.11"). None for system default.
+
+    Returns:
+        Tuple of (executable_path, actual_version_used)
+        If the requested version is not found, falls back to system Python with a warning.
+    """
+    if version:
+        # Try specific version executables
+        for candidate in [f"python{version}", f"python{version.split('.')[0]}"]:
+            path = shutil.which(candidate)
+            if path:
+                return path, version
+
+        # Try pyenv if installed
+        pyenv_root = os.environ.get("PYENV_ROOT", os.path.expanduser("~/.pyenv"))
+        pyenv_python = Path(pyenv_root) / "versions" / version / "bin" / "python"
+        if pyenv_python.exists():
+            return str(pyenv_python), version
+
+        # Fall back to system Python with warning
+        print(f"⚠️ Warning: Python {version} not found, using system Python")
+
+    # Default to python3
+    python_path = shutil.which("python3") or shutil.which("python")
+    if not python_path:
+        raise RuntimeError("No Python interpreter found in PATH")
+
+    return python_path, "system"
+
+
+def find_conda_executable() -> Optional[str]:
+    """
+    Find conda or mamba executable.
+
+    Returns:
+        Path to conda/mamba executable, or None if not found.
+    """
+    # Try mamba first (faster), then conda
+    for cmd in ["mamba", "conda"]:
+        path = shutil.which(cmd)
+        if path:
+            return path
+
+    # Check common install locations
+    common_paths = [
+        os.path.expanduser("~/miniforge3/bin/conda"),
+        os.path.expanduser("~/miniconda3/bin/conda"),
+        os.path.expanduser("~/anaconda3/bin/conda"),
+        "/opt/homebrew/Caskroom/miniforge/base/bin/conda",
+        "/usr/local/anaconda3/bin/conda",
+    ]
+
+    for path in common_paths:
+        if os.path.exists(path):
+            return path
+
+    return None
+
+
+def get_environment_path(workspace: Path, env_type: EnvironmentType) -> Path:
+    """
+    Get the path to the environment directory based on type.
+
+    Args:
+        workspace: Project workspace path
+        env_type: Type of environment (venv or conda)
+
+    Returns:
+        Path to environment directory
+    """
+    if env_type == EnvironmentType.CONDA:
+        return workspace / "env"  # conda uses ./env
+    else:
+        return workspace / "venv"  # venv uses ./venv
 
 
 def sanitize_command(command: str) -> str:
@@ -421,10 +502,11 @@ class ProcessManager:
         """
         Clone a GitHub repository into the project workspace.
 
-        Also detects the package manager and suggests install commands.
+        Also creates the appropriate Python environment (venv or conda) and
+        detects the package manager to suggest install commands.
 
         Args:
-            project: Project model with repo_url
+            project: Project model with repo_url, environment_type, python_version
             session: Database session for status updates
 
         Returns:
@@ -470,19 +552,23 @@ class ProcessManager:
                 session.commit()
                 return False
 
-            # Create virtual environment
-            venv_path = workspace / "venv"
-            process = await asyncio.create_subprocess_exec(
-                "python3", "-m", "venv", str(venv_path),
-                cwd=workspace,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
+            # Create Python environment based on environment_type
+            env_type = project.environment_type or EnvironmentType.VENV
+            python_version = project.python_version
 
-            await process.communicate()
+            if env_type == EnvironmentType.CONDA:
+                # Create conda environment
+                env_created = await self._create_conda_environment(
+                    workspace, python_version
+                )
+            else:
+                # Create venv environment (default)
+                env_created = await self._create_venv_environment(
+                    workspace, python_version
+                )
 
-            if process.returncode != 0:
-                print("Failed to create virtual environment")
+            if not env_created:
+                print(f"Failed to create {env_type.value} environment")
                 project.status = ProjectStatus.ERROR
                 session.add(project)
                 session.commit()
@@ -509,6 +595,173 @@ class ProcessManager:
             session.add(project)
             session.commit()
             return False
+
+    async def _create_venv_environment(
+        self,
+        workspace: Path,
+        python_version: Optional[str] = None
+    ) -> bool:
+        """
+        Create a Python venv environment in the workspace.
+
+        Args:
+            workspace: Project workspace directory
+            python_version: Desired Python version (e.g., "3.9", "3.11")
+
+        Returns:
+            True if successful, False otherwise
+        """
+        venv_path = workspace / "venv"
+
+        try:
+            # Find the appropriate Python executable
+            python_exe, actual_version = find_python_executable(python_version)
+            print(f"🐍 Creating venv with {python_exe} (version: {actual_version})")
+
+            process = await asyncio.create_subprocess_exec(
+                python_exe, "-m", "venv", str(venv_path),
+                cwd=workspace,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            stdout, stderr = await process.communicate()
+
+            if process.returncode != 0:
+                print(f"Failed to create venv: {stderr.decode()}")
+                return False
+
+            print(f"✅ Created venv environment at {venv_path}")
+            return True
+
+        except Exception as e:
+            print(f"Error creating venv: {e}")
+            return False
+
+    async def _create_conda_environment(
+        self,
+        workspace: Path,
+        python_version: Optional[str] = None
+    ) -> bool:
+        """
+        Create a Conda environment in the workspace using prefix (-p).
+
+        Uses 'conda create -p ./env python=X.Y -y' to create an isolated
+        environment within the project workspace.
+
+        Args:
+            workspace: Project workspace directory
+            python_version: Desired Python version (e.g., "3.9", "3.11")
+
+        Returns:
+            True if successful, False otherwise
+        """
+        env_path = workspace / "env"
+
+        try:
+            # Find conda executable
+            conda_exe = find_conda_executable()
+            if not conda_exe:
+                print("❌ Conda/Mamba not found in PATH. Cannot create conda environment.")
+                print("   Please install Miniforge, Miniconda, or Anaconda.")
+                return False
+
+            # Determine which tool we're using (mamba or conda)
+            tool_name = "mamba" if "mamba" in conda_exe else "conda"
+            print(f"🐍 Creating conda environment with {tool_name}")
+
+            # Build command
+            cmd = [conda_exe, "create", "-p", str(env_path), "-y"]
+
+            # Add Python version if specified
+            if python_version:
+                cmd.append(f"python={python_version}")
+            else:
+                cmd.append("python")  # Use conda's default Python
+
+            print(f"   Running: {' '.join(cmd)}")
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=workspace,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            stdout, stderr = await process.communicate()
+
+            if process.returncode != 0:
+                error_msg = stderr.decode()
+                print(f"Failed to create conda environment: {error_msg}")
+
+                # Check for common errors
+                if "PackagesNotFoundError" in error_msg:
+                    print(f"   Python {python_version} not available in conda channels")
+                return False
+
+            print(f"✅ Created conda environment at {env_path}")
+            return True
+
+        except Exception as e:
+            print(f"Error creating conda environment: {e}")
+            return False
+
+    async def ensure_environment_exists(
+        self,
+        project: Project,
+        session: Session
+    ) -> bool:
+        """
+        Ensure the project's Python environment exists. Recreate if missing.
+
+        This is called before running any command to verify the environment
+        is properly set up.
+
+        Args:
+            project: Project to check
+            session: Database session
+
+        Returns:
+            True if environment exists or was recreated successfully
+        """
+        if not project.workspace_path:
+            print(f"Project {project.id} has no workspace path")
+            return False
+
+        workspace = Path(project.workspace_path)
+        env_type = project.environment_type or EnvironmentType.VENV
+        env_path = get_environment_path(workspace, env_type)
+
+        # Check if environment directory exists
+        if env_path.exists():
+            # Additional check: verify Python executable exists
+            if env_type == EnvironmentType.CONDA:
+                python_check = env_path / "bin" / "python"
+            else:
+                python_check = env_path / "bin" / "python"
+
+            if python_check.exists():
+                return True
+            else:
+                print(f"⚠️ Environment directory exists but Python not found, recreating...")
+                shutil.rmtree(env_path)
+
+        # Environment doesn't exist, try to recreate it
+        print(f"⚠️ Environment not found at {env_path}, attempting to recreate...")
+
+        if env_type == EnvironmentType.CONDA:
+            success = await self._create_conda_environment(
+                workspace, project.python_version
+            )
+        else:
+            success = await self._create_venv_environment(
+                workspace, project.python_version
+            )
+
+        if not success:
+            print(f"❌ Failed to recreate environment for project {project.id}")
+
+        return success
 
     def load_env_file(self, workspace: Path) -> dict:
         """
@@ -557,6 +810,64 @@ class ProcessManager:
             "queue_length": len(self._job_queue)
         }
 
+    def _get_activation_command(self, project: Project, workspace: Path) -> str:
+        """
+        Get the shell command to activate the project's Python environment.
+
+        For venv: source ./venv/bin/activate
+        For conda: Uses 'conda run -p ./env --no-capture-output' wrapper
+
+        Args:
+            project: Project with environment configuration
+            workspace: Project workspace path
+
+        Returns:
+            Shell command string for environment activation
+        """
+        env_type = project.environment_type or EnvironmentType.VENV
+
+        if env_type == EnvironmentType.CONDA:
+            env_path = workspace / "env"
+            conda_exe = find_conda_executable()
+
+            if conda_exe:
+                # Use 'conda run' which handles activation properly in non-interactive shells
+                # --no-capture-output ensures real-time streaming works
+                return f'"{conda_exe}" run -p "{env_path}" --no-capture-output'
+            else:
+                # Fallback: try direct activation (may not work in all shells)
+                print("⚠️ Conda not found, attempting direct activation")
+                return f'source "{env_path}/bin/activate"'
+        else:
+            # venv activation
+            venv_path = workspace / "venv"
+            return f'source "{venv_path}/bin/activate" &&'
+
+    def _build_full_command(self, project: Project, workspace: Path, command: str) -> str:
+        """
+        Build the full command with environment activation.
+
+        For venv: source ./venv/bin/activate && command
+        For conda: conda run -p ./env --no-capture-output command
+
+        Args:
+            project: Project with environment configuration
+            workspace: Project workspace path
+            command: The command to execute
+
+        Returns:
+            Full shell command with activation
+        """
+        env_type = project.environment_type or EnvironmentType.VENV
+        activation = self._get_activation_command(project, workspace)
+
+        if env_type == EnvironmentType.CONDA:
+            # conda run already wraps the command
+            return f'{activation} {command}'
+        else:
+            # venv needs && to chain commands
+            return f'{activation} {command}'
+
     async def run_command(
         self,
         project: Project,
@@ -568,6 +879,7 @@ class ProcessManager:
         Execute any command as an async subprocess with concurrency control.
 
         This is the generic method used by all command execution (run, install, custom templates).
+        Supports both venv and conda environments.
 
         CRITICAL IMPLEMENTATION NOTES:
         1. PYTHONUNBUFFERED=1 ensures Python output is not buffered
@@ -575,6 +887,7 @@ class ProcessManager:
         3. Lines are pushed to queues AND written to log file
         4. Environment variables from .env file are loaded automatically
         5. Job concurrency is controlled by semaphore (max N concurrent jobs)
+        6. Environment activation varies by type (venv vs conda)
 
         Args:
             project: Project with workspace configuration
@@ -583,8 +896,26 @@ class ProcessManager:
             session: Database session
         """
         workspace = Path(project.workspace_path)
-        venv_path = workspace / "venv"
         log_path = self.get_job_log_path(job.id)
+
+        # Verify environment exists before running
+        env_exists = await self.ensure_environment_exists(project, session)
+        if not env_exists:
+            # Log error and fail the job
+            with open(log_path, "w") as log_file:
+                error_msg = f"❌ ERROR: Python environment not found and could not be recreated.\n"
+                error_msg += f"   Environment type: {project.environment_type or 'venv'}\n"
+                error_msg += f"   Please delete and recreate the project.\n"
+                log_file.write(error_msg)
+                for queue in self.log_queues[job.id]:
+                    await queue.put(error_msg)
+                    await queue.put(None)
+
+            job.status = JobStatus.FAILED
+            job.end_time = datetime.now(timezone.utc)
+            session.add(job)
+            session.commit()
+            return
 
         # Wait for semaphore slot (limits concurrent jobs)
         queue_position = len(self.running_processes)
@@ -597,10 +928,8 @@ class ProcessManager:
                     await queue.put(queue_msg)
 
         async with self._job_semaphore:
-            # Build the activation + command
-            # We source the venv and run the command in a single shell
-            activate_cmd = f'source "{venv_path}/bin/activate"'
-            full_command = f"{activate_cmd} && {command}"
+            # Build the activation + command based on environment type
+            full_command = self._build_full_command(project, workspace, command)
 
             # Environment variables - CRITICAL for real-time output
             env = os.environ.copy()

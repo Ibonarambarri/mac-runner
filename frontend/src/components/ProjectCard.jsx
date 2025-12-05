@@ -1,4 +1,4 @@
-import { GitBranch, Loader2, AlertCircle, Trash2, ChevronRight } from 'lucide-react';
+import { GitBranch, Loader2, AlertCircle, Trash2, ChevronRight, Box } from 'lucide-react';
 
 /**
  * Status indicator colors and icons
@@ -58,6 +58,22 @@ export function ProjectCard({ project, onClick, onDelete }) {
             <div className="flex items-center gap-2 mt-1 text-sm text-slate-500">
               <GitBranch className="w-3.5 h-3.5 flex-shrink-0" />
               <span className="truncate">{project.repo_url}</span>
+            </div>
+            {/* Environment badge */}
+            <div className="flex items-center gap-2 mt-2">
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
+                project.environment_type === 'conda'
+                  ? 'bg-green-500/20 text-green-400'
+                  : 'bg-blue-500/20 text-blue-400'
+              }`}>
+                <Box className="w-3 h-3" />
+                {project.environment_type === 'conda' ? 'conda' : 'venv'}
+              </span>
+              {project.python_version && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-700/50 text-slate-400">
+                  Python {project.python_version}
+                </span>
+              )}
             </div>
           </div>
 

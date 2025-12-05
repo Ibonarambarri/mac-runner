@@ -22,6 +22,12 @@ class ProjectStatus(str, Enum):
     ERROR = "error"
 
 
+class EnvironmentType(str, Enum):
+    """Type of Python environment for a project."""
+    VENV = "venv"
+    CONDA = "conda"
+
+
 class JobStatus(str, Enum):
     """Status states for a job execution."""
     PENDING = "pending"
@@ -40,6 +46,8 @@ class ProjectBase(SQLModel):
     run_command_enabled: bool = True  # Toggle to enable/disable run command
     run_notebook_enabled: bool = False  # Toggle to enable/disable notebook execution
     default_notebook: Optional[str] = None  # Path to default notebook to run
+    environment_type: EnvironmentType = Field(default=EnvironmentType.VENV)  # venv or conda
+    python_version: Optional[str] = None  # Python version (e.g., "3.9", "3.11"). None = system default
 
 
 class Project(ProjectBase, table=True):
@@ -70,6 +78,8 @@ class ProjectUpdate(SQLModel):
     run_command_enabled: Optional[bool] = None
     run_notebook_enabled: Optional[bool] = None
     default_notebook: Optional[str] = None
+    environment_type: Optional[EnvironmentType] = None
+    python_version: Optional[str] = None
 
 
 class ProjectRead(ProjectBase):
