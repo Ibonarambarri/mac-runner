@@ -16,15 +16,11 @@ import {
   FolderOpen,
   Terminal,
   Settings,
-  Check,
   X,
   Trash2,
-  Key,
   FileCode,
   ExternalLink,
   BookOpen,
-  LayoutDashboard,
-  ScrollText,
 } from 'lucide-react';
 
 import { LogViewer } from '../components/LogViewer';
@@ -126,10 +122,7 @@ function ProjectPage() {
   const [selectedJobId, setSelectedJobId] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('actions'); // 'actions' | 'files' | 'secrets' | 'schedules'
-
-  // Mobile navigation state - separate from desktop tabs
-  const [mobileView, setMobileView] = useState('dashboard'); // 'dashboard' | 'files' | 'logs'
+  const [activeTab, setActiveTab] = useState('actions'); // 'actions' | 'files' | 'schedules'
 
   // Settings modal state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -503,506 +496,257 @@ function ProjectPage() {
         </div>
       )}
 
-      {/* Main content - Different layouts for mobile and desktop */}
-      <main className="max-w-7xl mx-auto">
-        {/* ==================== DESKTOP LAYOUT (lg+) ==================== */}
-        <div className="hidden lg:block px-6 py-6">
-          {/* Desktop Tab switcher */}
-          <div className="flex gap-2 flex-wrap mb-6">
-            <button
-              onClick={() => setActiveTab('actions')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === 'actions'
-                  ? 'bg-terminal-green/20 text-terminal-green'
-                  : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Terminal className="w-4 h-4" />
-              Actions
-            </button>
-            <button
-              onClick={() => setActiveTab('files')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === 'files'
-                  ? 'bg-terminal-green/20 text-terminal-green'
-                  : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <FolderOpen className="w-4 h-4" />
-              Files
-            </button>
-            <button
-              onClick={() => setActiveTab('secrets')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === 'secrets'
-                  ? 'bg-yellow-500/20 text-yellow-400'
-                  : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Key className="w-4 h-4" />
-              Secrets
-            </button>
-            <button
-              onClick={() => setActiveTab('schedules')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === 'schedules'
-                  ? 'bg-purple-500/20 text-purple-400'
-                  : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Clock className="w-4 h-4" />
-              Schedules
-            </button>
-          </div>
-
-          {/* Desktop 2-column layout */}
-          <div className={`grid gap-6 ${activeTab === 'files' ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2'}`}>
-            {/* Left column: Content */}
-            <div className="space-y-6">
-              {activeTab === 'actions' ? (
-                <>
-                  {/* Quick Actions */}
-                  <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
-                    <h2 className="text-sm font-semibold text-slate-400 mb-4">Quick Actions</h2>
-                    <div className="flex flex-wrap gap-3">
-                      {isRunning ? (
-                        <button
-                          onClick={handleStop}
-                          className="flex items-center gap-2 px-4 py-2.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors"
-                        >
-                          <Square className="w-4 h-4" />
-                          Stop
-                        </button>
-                      ) : (
-                        <>
-                          {project.run_command_enabled && (
-                            <button
-                              onClick={handleRun}
-                              disabled={isCloning}
-                              className="flex items-center gap-2 px-4 py-2.5 bg-terminal-green/20 text-terminal-green rounded-lg hover:bg-terminal-green/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              <Play className="w-4 h-4" />
-                              Run
-                            </button>
-                          )}
-                          <button
-                            onClick={handleInstall}
-                            disabled={isCloning}
-                            className="flex items-center gap-2 px-4 py-2.5 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            <Download className="w-4 h-4" />
-                            Install
-                          </button>
-                          <button
-                            onClick={handlePull}
-                            disabled={isCloning}
-                            className="flex items-center gap-2 px-4 py-2.5 bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            <GitPullRequest className="w-4 h-4" />
-                            Pull
-                          </button>
-                          {project.run_notebook_enabled && (
-                            <button
-                              onClick={handleRunDefaultNotebook}
-                              disabled={isCloning || runningNotebook}
-                              className="flex items-center gap-2 px-4 py-2.5 bg-orange-500/20 text-orange-400 rounded-lg hover:bg-orange-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                              title={project.default_notebook || 'No notebook configured'}
-                            >
-                              {runningNotebook ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <FileCode className="w-4 h-4" />
-                              )}
-                              Notebook
-                            </button>
-                          )}
-                        </>
-                      )}
-                      <div className="flex items-center gap-2 ml-auto">
-                        <button
-                          onClick={handleOpenSettings}
-                          className="p-2.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
-                          title="Settings"
-                        >
-                          <Settings className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={fetchData}
-                          className="p-2.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
-                          title="Refresh"
-                        >
-                          <RefreshCw className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  </section>
-
-                  {/* Quick Run - Admin only */}
-                  {isAdmin && (
-                    <QuickRun
-                      projectId={projectId}
-                      onJobStarted={(job) => {
-                        setSelectedJobId(job.id);
-                        clearLogs();
-                      }}
-                      onCommandsChange={fetchData}
-                      disabled={isRunning || isCloning}
-                    />
-                  )}
-
-                  {/* Command Templates */}
-                  <CommandSection
-                    projectId={projectId}
-                    commands={commands}
-                    onRunCommand={handleRunCommand}
-                    onCommandsChange={fetchData}
-                    disabled={isRunning || isCloning}
-                    isAdmin={isAdmin}
-                  />
-
-                  {/* Job History */}
-                  <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
-                    <h2 className="text-sm font-semibold text-slate-400 mb-4">Job History</h2>
-                    {jobs.length === 0 ? (
-                      <p className="text-slate-500 text-sm">No jobs yet</p>
-                    ) : (
-                      <div className="space-y-1 max-h-64 overflow-y-auto">
-                        {jobs.slice(0, 10).map((job) => (
-                          <div
-                            key={job.id}
-                            onClick={() => handleSelectJob(job.id)}
-                            className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer group ${
-                              selectedJobId === job.id
-                                ? 'bg-terminal-green/10 text-terminal-green'
-                                : 'hover:bg-slate-800'
-                            }`}
-                          >
-                            {job.status === 'running' && (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin text-terminal-green flex-shrink-0" />
-                            )}
-                            {job.status === 'completed' && (
-                              <CheckCircle2 className="w-3.5 h-3.5 text-terminal-green flex-shrink-0" />
-                            )}
-                            {job.status === 'failed' && (
-                              <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
-                            )}
-                            {job.status === 'stopped' && (
-                              <Square className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
-                            )}
-                            {job.status === 'pending' && (
-                              <Clock className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
-                            )}
-
-                            <span className={`flex-1 truncate ${selectedJobId === job.id ? '' : getJobTypeColor(job.command_name)}`} title={job.command_executed || ''}>
-                              #{job.id} {job.command_executed
-                                ? `- ${job.command_executed.length > 40 ? job.command_executed.substring(0, 40) + '...' : job.command_executed}`
-                                : job.command_name && `- ${job.command_name}`}
-                            </span>
-                            <span className="text-xs text-slate-500 flex-shrink-0">
-                              {new Date(job.start_time).toLocaleTimeString()}
-                            </span>
-                            {job.status !== 'running' && (
-                              <button
-                                onClick={(e) => handleDeleteJob(job.id, e)}
-                                className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-all flex-shrink-0 touch-manipulation"
-                                title="Delete job"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </section>
-                </>
-              ) : activeTab === 'files' ? (
-                <div className="h-[calc(100vh-240px)]">
-                  <TensorBoardWidget projectId={projectId} />
-                  <FileExplorer projectId={projectId} fullWidth />
-                </div>
-              ) : activeTab === 'secrets' ? (
-                <EnvEditor projectId={projectId} />
-              ) : activeTab === 'schedules' ? (
-                <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
-                  <ScheduleManager projectId={parseInt(projectId)} />
-                </div>
-              ) : null}
-            </div>
-
-            {/* Right column: Log Viewer - Desktop only, hidden when Files tab */}
-            {activeTab !== 'files' && (
-              <div className="sticky top-6 h-[calc(100vh-200px)]">
-                <LogViewer
-                  logs={logs}
-                  isConnected={isConnected}
-                  isComplete={isComplete}
-                  error={wsError}
-                  jobId={selectedJobId}
-                  onClear={() => {
-                    setSelectedJobId(null);
-                    clearLogs();
-                  }}
-                />
-              </div>
-            )}
-          </div>
+      {/* Main content - Unified responsive layout */}
+      <main className="max-w-7xl mx-auto px-4 lg:px-6 py-4 lg:py-6">
+        {/* Tab Navigation - Responsive */}
+        <div className="flex overflow-x-auto gap-2 mb-4 lg:mb-6 pb-2 -mx-4 px-4 lg:mx-0 lg:px-0 scrollbar-hide">
+          <button
+            onClick={() => setActiveTab('actions')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap touch-manipulation ${
+              activeTab === 'actions'
+                ? 'bg-terminal-green/20 text-terminal-green'
+                : 'bg-slate-800 text-slate-400 hover:text-slate-200 active:bg-slate-700'
+            }`}
+          >
+            <Terminal className="w-4 h-4" />
+            Actions
+          </button>
+          <button
+            onClick={() => setActiveTab('files')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap touch-manipulation ${
+              activeTab === 'files'
+                ? 'bg-terminal-green/20 text-terminal-green'
+                : 'bg-slate-800 text-slate-400 hover:text-slate-200 active:bg-slate-700'
+            }`}
+          >
+            <FolderOpen className="w-4 h-4" />
+            Files
+          </button>
+          <button
+            onClick={() => setActiveTab('schedules')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap touch-manipulation ${
+              activeTab === 'schedules'
+                ? 'bg-purple-500/20 text-purple-400'
+                : 'bg-slate-800 text-slate-400 hover:text-slate-200 active:bg-slate-700'
+            }`}
+          >
+            <Clock className="w-4 h-4" />
+            Schedules
+          </button>
         </div>
 
-        {/* ==================== MOBILE LAYOUT (< lg) ==================== */}
-        <div className="lg:hidden flex flex-col h-[calc(100dvh-140px)]">
-          {/* Mobile Content Area - takes remaining space above bottom nav */}
-          <div className="flex-1 overflow-hidden pb-16">
-            {/* Dashboard View */}
-            {mobileView === 'dashboard' && (
-              <div className="h-full overflow-y-auto px-4 py-4 space-y-4">
-                {/* Quick Actions */}
-                <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
-                  <h2 className="text-sm font-semibold text-slate-400 mb-3">Quick Actions</h2>
-                  <div className="grid grid-cols-2 gap-2">
-                    {isRunning ? (
+        {/* Content Area */}
+        {activeTab === 'actions' && (
+          <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
+            {/* Left/Top: Actions Content */}
+            <div className="flex-1 lg:w-2/3 space-y-4 lg:space-y-6">
+              {/* Quick Actions */}
+              <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
+                <h2 className="text-sm font-semibold text-slate-400 mb-3 lg:mb-4">Quick Actions</h2>
+                <div className="grid grid-cols-2 lg:flex lg:flex-wrap gap-2 lg:gap-3">
+                  {isRunning ? (
+                    <button
+                      onClick={handleStop}
+                      className="flex items-center justify-center lg:justify-start gap-2 px-4 py-3 lg:py-2.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 active:bg-red-500/30 transition-colors touch-manipulation col-span-2 lg:col-span-1"
+                    >
+                      <Square className="w-5 h-5 lg:w-4 lg:h-4" />
+                      Stop
+                    </button>
+                  ) : (
+                    <>
+                      {project.run_command_enabled && (
+                        <button
+                          onClick={handleRun}
+                          disabled={isCloning}
+                          className="flex items-center justify-center lg:justify-start gap-2 px-4 py-3 lg:py-2.5 bg-terminal-green/20 text-terminal-green rounded-lg hover:bg-terminal-green/30 active:bg-terminal-green/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                        >
+                          <Play className="w-5 h-5 lg:w-4 lg:h-4" />
+                          Run
+                        </button>
+                      )}
                       <button
-                        onClick={handleStop}
-                        className="flex items-center justify-center gap-2 px-4 py-3 bg-red-500/20 text-red-400 rounded-lg active:bg-red-500/30 transition-colors touch-manipulation"
+                        onClick={handleInstall}
+                        disabled={isCloning}
+                        className="flex items-center justify-center lg:justify-start gap-2 px-4 py-3 lg:py-2.5 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 active:bg-blue-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
                       >
-                        <Square className="w-5 h-5" />
-                        Stop
+                        <Download className="w-5 h-5 lg:w-4 lg:h-4" />
+                        Install
                       </button>
-                    ) : (
-                      <>
-                        {project.run_command_enabled && (
-                          <button
-                            onClick={handleRun}
-                            disabled={isCloning}
-                            className="flex items-center justify-center gap-2 px-4 py-3 bg-terminal-green/20 text-terminal-green rounded-lg active:bg-terminal-green/30 transition-colors disabled:opacity-50 touch-manipulation"
-                          >
-                            <Play className="w-5 h-5" />
-                            Run
-                          </button>
-                        )}
+                      <button
+                        onClick={handlePull}
+                        disabled={isCloning}
+                        className="flex items-center justify-center lg:justify-start gap-2 px-4 py-3 lg:py-2.5 bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 active:bg-purple-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                      >
+                        <GitPullRequest className="w-5 h-5 lg:w-4 lg:h-4" />
+                        Pull
+                      </button>
+                      {project.run_notebook_enabled && (
                         <button
-                          onClick={handleInstall}
-                          disabled={isCloning}
-                          className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-500/20 text-blue-400 rounded-lg active:bg-blue-500/30 transition-colors disabled:opacity-50 touch-manipulation"
+                          onClick={handleRunDefaultNotebook}
+                          disabled={isCloning || runningNotebook}
+                          className="flex items-center justify-center lg:justify-start gap-2 px-4 py-3 lg:py-2.5 bg-orange-500/20 text-orange-400 rounded-lg hover:bg-orange-500/30 active:bg-orange-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                          title={project.default_notebook || 'No notebook configured'}
                         >
-                          <Download className="w-5 h-5" />
-                          Install
+                          {runningNotebook ? (
+                            <Loader2 className="w-5 h-5 lg:w-4 lg:h-4 animate-spin" />
+                          ) : (
+                            <FileCode className="w-5 h-5 lg:w-4 lg:h-4" />
+                          )}
+                          Notebook
                         </button>
-                        <button
-                          onClick={handlePull}
-                          disabled={isCloning}
-                          className="flex items-center justify-center gap-2 px-4 py-3 bg-purple-500/20 text-purple-400 rounded-lg active:bg-purple-500/30 transition-colors disabled:opacity-50 touch-manipulation"
-                        >
-                          <GitPullRequest className="w-5 h-5" />
-                          Pull
-                        </button>
-                        <button
-                          onClick={handleOpenSettings}
-                          className="flex items-center justify-center gap-2 px-4 py-3 bg-slate-800 text-slate-300 rounded-lg active:bg-slate-700 transition-colors touch-manipulation"
-                        >
-                          <Settings className="w-5 h-5" />
-                          Settings
-                        </button>
-                      </>
-                    )}
+                      )}
+                    </>
+                  )}
+                  <div className="flex items-center gap-2 col-span-2 lg:col-span-1 lg:ml-auto justify-end">
+                    <button
+                      onClick={handleOpenSettings}
+                      className="p-3 lg:p-2.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 active:bg-slate-700 rounded-lg transition-colors touch-manipulation"
+                      title="Settings"
+                    >
+                      <Settings className="w-5 h-5 lg:w-4 lg:h-4" />
+                    </button>
+                    <button
+                      onClick={fetchData}
+                      className="p-3 lg:p-2.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 active:bg-slate-700 rounded-lg transition-colors touch-manipulation"
+                      title="Refresh"
+                    >
+                      <RefreshCw className="w-5 h-5 lg:w-4 lg:h-4" />
+                    </button>
                   </div>
-                </section>
+                </div>
+              </section>
 
-                {/* Quick Run - Admin only */}
-                {isAdmin && (
-                  <QuickRun
-                    projectId={projectId}
-                    onJobStarted={(job) => {
-                      setSelectedJobId(job.id);
-                      setMobileView('logs');
-                      clearLogs();
-                    }}
-                    onCommandsChange={fetchData}
-                    disabled={isRunning || isCloning}
-                  />
-                )}
-
-                {/* Command Templates */}
-                <CommandSection
+              {/* Quick Run - Admin only */}
+              {isAdmin && (
+                <QuickRun
                   projectId={projectId}
-                  commands={commands}
-                  onRunCommand={(commandId) => {
-                    handleRunCommand(commandId);
-                    setMobileView('logs');
+                  onJobStarted={(job) => {
+                    setSelectedJobId(job.id);
+                    clearLogs();
                   }}
                   onCommandsChange={fetchData}
                   disabled={isRunning || isCloning}
-                  isAdmin={isAdmin}
                 />
+              )}
 
-                {/* Job History */}
-                <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
-                  <h2 className="text-sm font-semibold text-slate-400 mb-3">Job History</h2>
-                  {jobs.length === 0 ? (
-                    <p className="text-slate-500 text-sm">No jobs yet</p>
-                  ) : (
-                    <div className="space-y-1">
-                      {jobs.slice(0, 10).map((job) => (
-                        <div
-                          key={job.id}
-                          onClick={() => {
-                            handleSelectJob(job.id);
-                            setMobileView('logs');
-                          }}
-                          className={`flex items-center gap-3 px-3 py-3 rounded-lg text-sm transition-colors cursor-pointer active:bg-slate-700 touch-manipulation ${
-                            selectedJobId === job.id
-                              ? 'bg-terminal-green/10 text-terminal-green'
-                              : 'bg-slate-800/50'
-                          }`}
-                        >
-                          {job.status === 'running' && (
-                            <Loader2 className="w-4 h-4 animate-spin text-terminal-green flex-shrink-0" />
-                          )}
-                          {job.status === 'completed' && (
-                            <CheckCircle2 className="w-4 h-4 text-terminal-green flex-shrink-0" />
-                          )}
-                          {job.status === 'failed' && (
-                            <XCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
-                          )}
-                          {job.status === 'stopped' && (
-                            <Square className="w-4 h-4 text-yellow-400 flex-shrink-0" />
-                          )}
-                          {job.status === 'pending' && (
-                            <Clock className="w-4 h-4 text-slate-500 flex-shrink-0" />
-                          )}
+              {/* Command Templates */}
+              <CommandSection
+                projectId={projectId}
+                commands={commands}
+                onRunCommand={handleRunCommand}
+                onCommandsChange={fetchData}
+                disabled={isRunning || isCloning}
+                isAdmin={isAdmin}
+              />
 
-                          <span className={`flex-1 truncate ${selectedJobId === job.id ? '' : getJobTypeColor(job.command_name)}`}>
-                            #{job.id} {job.command_name || 'command'}
-                          </span>
-                          <span className="text-xs text-slate-500 flex-shrink-0">
-                            {new Date(job.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                          {/* Delete button always visible on mobile */}
-                          {job.status !== 'running' && (
-                            <button
-                              onClick={(e) => handleDeleteJob(job.id, e)}
-                              className="p-2 text-slate-500 active:text-red-400 active:bg-red-500/10 rounded flex-shrink-0 touch-manipulation"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
+              {/* Job History */}
+              <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
+                <h2 className="text-sm font-semibold text-slate-400 mb-3 lg:mb-4">Job History</h2>
+                {jobs.length === 0 ? (
+                  <p className="text-slate-500 text-sm">No jobs yet</p>
+                ) : (
+                  <div className="space-y-1 max-h-64 overflow-y-auto">
+                    {jobs.slice(0, 10).map((job) => (
+                      <div
+                        key={job.id}
+                        onClick={() => handleSelectJob(job.id)}
+                        className={`flex items-center gap-3 px-3 py-2.5 lg:py-2 rounded-lg text-sm transition-colors cursor-pointer group touch-manipulation ${
+                          selectedJobId === job.id
+                            ? 'bg-terminal-green/10 text-terminal-green'
+                            : 'hover:bg-slate-800 active:bg-slate-800'
+                        }`}
+                      >
+                        {job.status === 'running' && (
+                          <Loader2 className="w-4 h-4 lg:w-3.5 lg:h-3.5 animate-spin text-terminal-green flex-shrink-0" />
+                        )}
+                        {job.status === 'completed' && (
+                          <CheckCircle2 className="w-4 h-4 lg:w-3.5 lg:h-3.5 text-terminal-green flex-shrink-0" />
+                        )}
+                        {job.status === 'failed' && (
+                          <XCircle className="w-4 h-4 lg:w-3.5 lg:h-3.5 text-red-400 flex-shrink-0" />
+                        )}
+                        {job.status === 'stopped' && (
+                          <Square className="w-4 h-4 lg:w-3.5 lg:h-3.5 text-yellow-400 flex-shrink-0" />
+                        )}
+                        {job.status === 'pending' && (
+                          <Clock className="w-4 h-4 lg:w-3.5 lg:h-3.5 text-slate-500 flex-shrink-0" />
+                        )}
 
-                {/* Secrets & Schedules Links */}
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    onClick={() => setActiveTab('secrets')}
-                    className="flex items-center justify-center gap-2 px-4 py-3 bg-yellow-500/10 text-yellow-400 rounded-lg border border-yellow-500/20 active:bg-yellow-500/20 touch-manipulation"
-                  >
-                    <Key className="w-5 h-5" />
-                    Secrets
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('schedules')}
-                    className="flex items-center justify-center gap-2 px-4 py-3 bg-purple-500/10 text-purple-400 rounded-lg border border-purple-500/20 active:bg-purple-500/20 touch-manipulation"
-                  >
-                    <Clock className="w-5 h-5" />
-                    Schedules
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Files View */}
-            {mobileView === 'files' && (
-              <div className="h-full">
-                <FileExplorer projectId={projectId} fullWidth isMobile />
-              </div>
-            )}
-
-            {/* Logs View */}
-            {mobileView === 'logs' && (
-              <div className="h-full p-2">
-                <LogViewer
-                  logs={logs}
-                  isConnected={isConnected}
-                  isComplete={isComplete}
-                  error={wsError}
-                  jobId={selectedJobId}
-                  onClear={() => {
-                    setSelectedJobId(null);
-                    clearLogs();
-                  }}
-                  isMobile
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Mobile Bottom Navigation - Sticky */}
-          <nav className="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 px-2 py-2 pb-safe z-40">
-            <div className="flex justify-around items-center max-w-md mx-auto">
-              <button
-                onClick={() => setMobileView('dashboard')}
-                className={`flex flex-col items-center gap-1 px-4 py-2 rounded-lg transition-colors touch-manipulation min-w-[72px] ${
-                  mobileView === 'dashboard'
-                    ? 'text-terminal-green bg-terminal-green/10'
-                    : 'text-slate-400 active:text-slate-200'
-                }`}
-              >
-                <LayoutDashboard className="w-5 h-5" />
-                <span className="text-xs font-medium">Dashboard</span>
-              </button>
-              <button
-                onClick={() => setMobileView('files')}
-                className={`flex flex-col items-center gap-1 px-4 py-2 rounded-lg transition-colors touch-manipulation min-w-[72px] ${
-                  mobileView === 'files'
-                    ? 'text-terminal-green bg-terminal-green/10'
-                    : 'text-slate-400 active:text-slate-200'
-                }`}
-              >
-                <FolderOpen className="w-5 h-5" />
-                <span className="text-xs font-medium">Files</span>
-              </button>
-              <button
-                onClick={() => setMobileView('logs')}
-                className={`flex flex-col items-center gap-1 px-4 py-2 rounded-lg transition-colors touch-manipulation min-w-[72px] relative ${
-                  mobileView === 'logs'
-                    ? 'text-terminal-green bg-terminal-green/10'
-                    : 'text-slate-400 active:text-slate-200'
-                }`}
-              >
-                <ScrollText className="w-5 h-5" />
-                <span className="text-xs font-medium">Logs</span>
-                {/* Running indicator */}
-                {isRunning && mobileView !== 'logs' && (
-                  <span className="absolute top-1 right-3 w-2 h-2 bg-terminal-green rounded-full animate-pulse" />
+                        <span className={`flex-1 truncate ${selectedJobId === job.id ? '' : getJobTypeColor(job.command_name)}`} title={job.command_executed || ''}>
+                          #{job.id} {job.command_executed
+                            ? `- ${job.command_executed.length > 30 ? job.command_executed.substring(0, 30) + '...' : job.command_executed}`
+                            : job.command_name && `- ${job.command_name}`}
+                        </span>
+                        <span className="text-xs text-slate-500 flex-shrink-0 hidden sm:inline">
+                          {new Date(job.start_time).toLocaleTimeString()}
+                        </span>
+                        {job.status !== 'running' && (
+                          <button
+                            onClick={(e) => handleDeleteJob(job.id, e)}
+                            className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 active:text-red-400 active:bg-red-500/10 rounded opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-all flex-shrink-0 touch-manipulation"
+                            title="Delete job"
+                          >
+                            <Trash2 className="w-4 h-4 lg:w-3.5 lg:h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 )}
-              </button>
+              </section>
             </div>
-          </nav>
-        </div>
+
+            {/* Right/Bottom: Log Viewer */}
+            <div className="lg:w-1/3 lg:sticky lg:top-6 h-[400px] lg:h-[calc(100vh-200px)]">
+              <LogViewer
+                logs={logs}
+                isConnected={isConnected}
+                isComplete={isComplete}
+                error={wsError}
+                jobId={selectedJobId}
+                onClear={() => {
+                  setSelectedJobId(null);
+                  clearLogs();
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'files' && (
+          <div className="h-[calc(100dvh-180px)] lg:h-[calc(100vh-200px)]">
+            <TensorBoardWidget projectId={projectId} />
+            <FileExplorer projectId={projectId} fullWidth isMobile={window.innerWidth < 1024} />
+          </div>
+        )}
+
+        {activeTab === 'schedules' && (
+          <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
+            <ScheduleManager projectId={parseInt(projectId)} />
+          </div>
+        )}
       </main>
 
       {/* Settings Modal */}
       {isSettingsOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-slate-900 w-full max-w-md rounded-xl border border-slate-800 overflow-hidden">
+          <div className="bg-slate-900 w-full max-w-2xl max-h-[90vh] rounded-xl border border-slate-800 overflow-hidden flex flex-col">
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50 flex-shrink-0">
               <div className="flex items-center gap-2">
                 <Settings className="w-5 h-5 text-slate-400" />
                 <span className="font-semibold text-slate-100">Project Settings</span>
               </div>
               <button
                 onClick={() => setIsSettingsOpen(false)}
-                className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+                className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors touch-manipulation"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Content */}
-            <div className="p-4 space-y-4">
+            {/* Content - Scrollable */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {/* Install command */}
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-2">
@@ -1086,22 +830,34 @@ function ProjectPage() {
                   )}
                 </div>
               )}
+
+              {/* Divider */}
+              <div className="border-t border-slate-700 my-2"></div>
+
+              {/* Environment Secrets */}
+              <div>
+                <h3 className="text-sm font-semibold text-yellow-400 mb-3 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-yellow-400"></span>
+                  Environment Secrets
+                </h3>
+                <EnvEditor projectId={projectId} />
+              </div>
             </div>
 
             {/* Footer */}
-            <div className="flex justify-end gap-3 px-4 py-3 border-t border-slate-800 bg-slate-900/30">
+            <div className="flex justify-end gap-3 px-4 py-3 border-t border-slate-800 bg-slate-900/30 flex-shrink-0">
               <button
                 onClick={() => setIsSettingsOpen(false)}
-                className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+                className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors touch-manipulation"
               >
-                Cancel
+                Close
               </button>
               <button
                 onClick={handleSaveSettings}
                 disabled={savingSettings}
-                className="px-4 py-2 text-sm bg-terminal-green text-slate-950 font-semibold rounded-lg hover:bg-terminal-green/90 transition-colors disabled:opacity-50"
+                className="px-4 py-2 text-sm bg-terminal-green text-slate-950 font-semibold rounded-lg hover:bg-terminal-green/90 transition-colors disabled:opacity-50 touch-manipulation"
               >
-                {savingSettings ? 'Saving...' : 'Save'}
+                {savingSettings ? 'Saving...' : 'Save Commands'}
               </button>
             </div>
           </div>

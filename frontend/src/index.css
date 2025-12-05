@@ -229,3 +229,12 @@ button {
   border-radius: 8px;
   margin: 1em 0;
 }
+
+/* Hide scrollbar for tabs but keep scrollability */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
