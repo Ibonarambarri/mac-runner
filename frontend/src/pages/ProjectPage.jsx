@@ -23,6 +23,8 @@ import {
   FileCode,
   ExternalLink,
   BookOpen,
+  LayoutDashboard,
+  ScrollText,
 } from 'lucide-react';
 
 import { LogViewer } from '../components/LogViewer';
@@ -125,6 +127,9 @@ function ProjectPage() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('actions'); // 'actions' | 'files' | 'secrets' | 'schedules'
+
+  // Mobile navigation state - separate from desktop tabs
+  const [mobileView, setMobileView] = useState('dashboard'); // 'dashboard' | 'files' | 'logs'
 
   // Settings modal state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -498,73 +503,269 @@ function ProjectPage() {
         </div>
       )}
 
-      {/* Main content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6">
-        {/* Tab switcher - always visible */}
-        <div className="flex gap-2 flex-wrap mb-6">
-          <button
-            onClick={() => setActiveTab('actions')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors touch-manipulation ${
-              activeTab === 'actions'
-                ? 'bg-terminal-green/20 text-terminal-green'
-                : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Terminal className="w-4 h-4" />
-            Actions
-          </button>
-          <button
-            onClick={() => setActiveTab('files')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors touch-manipulation ${
-              activeTab === 'files'
-                ? 'bg-terminal-green/20 text-terminal-green'
-                : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <FolderOpen className="w-4 h-4" />
-            Files
-          </button>
-          <button
-            onClick={() => setActiveTab('secrets')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors touch-manipulation ${
-              activeTab === 'secrets'
-                ? 'bg-yellow-500/20 text-yellow-400'
-                : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Key className="w-4 h-4" />
-            Secrets
-          </button>
-          <button
-            onClick={() => setActiveTab('schedules')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors touch-manipulation ${
-              activeTab === 'schedules'
-                ? 'bg-purple-500/20 text-purple-400'
-                : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Clock className="w-4 h-4" />
-            Schedules
-          </button>
+      {/* Main content - Different layouts for mobile and desktop */}
+      <main className="max-w-7xl mx-auto">
+        {/* ==================== DESKTOP LAYOUT (lg+) ==================== */}
+        <div className="hidden lg:block px-6 py-6">
+          {/* Desktop Tab switcher */}
+          <div className="flex gap-2 flex-wrap mb-6">
+            <button
+              onClick={() => setActiveTab('actions')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                activeTab === 'actions'
+                  ? 'bg-terminal-green/20 text-terminal-green'
+                  : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Terminal className="w-4 h-4" />
+              Actions
+            </button>
+            <button
+              onClick={() => setActiveTab('files')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                activeTab === 'files'
+                  ? 'bg-terminal-green/20 text-terminal-green'
+                  : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <FolderOpen className="w-4 h-4" />
+              Files
+            </button>
+            <button
+              onClick={() => setActiveTab('secrets')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                activeTab === 'secrets'
+                  ? 'bg-yellow-500/20 text-yellow-400'
+                  : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Key className="w-4 h-4" />
+              Secrets
+            </button>
+            <button
+              onClick={() => setActiveTab('schedules')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                activeTab === 'schedules'
+                  ? 'bg-purple-500/20 text-purple-400'
+                  : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Clock className="w-4 h-4" />
+              Schedules
+            </button>
+          </div>
+
+          {/* Desktop 2-column layout */}
+          <div className={`grid gap-6 ${activeTab === 'files' ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2'}`}>
+            {/* Left column: Content */}
+            <div className="space-y-6">
+              {activeTab === 'actions' ? (
+                <>
+                  {/* Quick Actions */}
+                  <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
+                    <h2 className="text-sm font-semibold text-slate-400 mb-4">Quick Actions</h2>
+                    <div className="flex flex-wrap gap-3">
+                      {isRunning ? (
+                        <button
+                          onClick={handleStop}
+                          className="flex items-center gap-2 px-4 py-2.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors"
+                        >
+                          <Square className="w-4 h-4" />
+                          Stop
+                        </button>
+                      ) : (
+                        <>
+                          {project.run_command_enabled && (
+                            <button
+                              onClick={handleRun}
+                              disabled={isCloning}
+                              className="flex items-center gap-2 px-4 py-2.5 bg-terminal-green/20 text-terminal-green rounded-lg hover:bg-terminal-green/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <Play className="w-4 h-4" />
+                              Run
+                            </button>
+                          )}
+                          <button
+                            onClick={handleInstall}
+                            disabled={isCloning}
+                            className="flex items-center gap-2 px-4 py-2.5 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <Download className="w-4 h-4" />
+                            Install
+                          </button>
+                          <button
+                            onClick={handlePull}
+                            disabled={isCloning}
+                            className="flex items-center gap-2 px-4 py-2.5 bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <GitPullRequest className="w-4 h-4" />
+                            Pull
+                          </button>
+                          {project.run_notebook_enabled && (
+                            <button
+                              onClick={handleRunDefaultNotebook}
+                              disabled={isCloning || runningNotebook}
+                              className="flex items-center gap-2 px-4 py-2.5 bg-orange-500/20 text-orange-400 rounded-lg hover:bg-orange-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                              title={project.default_notebook || 'No notebook configured'}
+                            >
+                              {runningNotebook ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <FileCode className="w-4 h-4" />
+                              )}
+                              Notebook
+                            </button>
+                          )}
+                        </>
+                      )}
+                      <div className="flex items-center gap-2 ml-auto">
+                        <button
+                          onClick={handleOpenSettings}
+                          className="p-2.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+                          title="Settings"
+                        >
+                          <Settings className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={fetchData}
+                          className="p-2.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+                          title="Refresh"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </section>
+
+                  {/* Quick Run - Admin only */}
+                  {isAdmin && (
+                    <QuickRun
+                      projectId={projectId}
+                      onJobStarted={(job) => {
+                        setSelectedJobId(job.id);
+                        clearLogs();
+                      }}
+                      onCommandsChange={fetchData}
+                      disabled={isRunning || isCloning}
+                    />
+                  )}
+
+                  {/* Command Templates */}
+                  <CommandSection
+                    projectId={projectId}
+                    commands={commands}
+                    onRunCommand={handleRunCommand}
+                    onCommandsChange={fetchData}
+                    disabled={isRunning || isCloning}
+                    isAdmin={isAdmin}
+                  />
+
+                  {/* Job History */}
+                  <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
+                    <h2 className="text-sm font-semibold text-slate-400 mb-4">Job History</h2>
+                    {jobs.length === 0 ? (
+                      <p className="text-slate-500 text-sm">No jobs yet</p>
+                    ) : (
+                      <div className="space-y-1 max-h-64 overflow-y-auto">
+                        {jobs.slice(0, 10).map((job) => (
+                          <div
+                            key={job.id}
+                            onClick={() => handleSelectJob(job.id)}
+                            className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer group ${
+                              selectedJobId === job.id
+                                ? 'bg-terminal-green/10 text-terminal-green'
+                                : 'hover:bg-slate-800'
+                            }`}
+                          >
+                            {job.status === 'running' && (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-terminal-green flex-shrink-0" />
+                            )}
+                            {job.status === 'completed' && (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-terminal-green flex-shrink-0" />
+                            )}
+                            {job.status === 'failed' && (
+                              <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+                            )}
+                            {job.status === 'stopped' && (
+                              <Square className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
+                            )}
+                            {job.status === 'pending' && (
+                              <Clock className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+                            )}
+
+                            <span className={`flex-1 truncate ${selectedJobId === job.id ? '' : getJobTypeColor(job.command_name)}`} title={job.command_executed || ''}>
+                              #{job.id} {job.command_executed
+                                ? `- ${job.command_executed.length > 40 ? job.command_executed.substring(0, 40) + '...' : job.command_executed}`
+                                : job.command_name && `- ${job.command_name}`}
+                            </span>
+                            <span className="text-xs text-slate-500 flex-shrink-0">
+                              {new Date(job.start_time).toLocaleTimeString()}
+                            </span>
+                            {job.status !== 'running' && (
+                              <button
+                                onClick={(e) => handleDeleteJob(job.id, e)}
+                                className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-all flex-shrink-0 touch-manipulation"
+                                title="Delete job"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                </>
+              ) : activeTab === 'files' ? (
+                <div className="h-[calc(100vh-240px)]">
+                  <TensorBoardWidget projectId={projectId} />
+                  <FileExplorer projectId={projectId} fullWidth />
+                </div>
+              ) : activeTab === 'secrets' ? (
+                <EnvEditor projectId={projectId} />
+              ) : activeTab === 'schedules' ? (
+                <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
+                  <ScheduleManager projectId={parseInt(projectId)} />
+                </div>
+              ) : null}
+            </div>
+
+            {/* Right column: Log Viewer - Desktop only, hidden when Files tab */}
+            {activeTab !== 'files' && (
+              <div className="sticky top-6 h-[calc(100vh-200px)]">
+                <LogViewer
+                  logs={logs}
+                  isConnected={isConnected}
+                  isComplete={isComplete}
+                  error={wsError}
+                  jobId={selectedJobId}
+                  onClear={() => {
+                    setSelectedJobId(null);
+                    clearLogs();
+                  }}
+                />
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Conditional layout: Full width for files, 2-column for others */}
-        <div className={`grid gap-6 ${activeTab === 'files' ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2'}`}>
-          {/* Left column: Content */}
-          <div className={`space-y-6 ${activeTab === 'files' ? '' : ''}`}>
-
-            {activeTab === 'actions' ? (
-              <>
+        {/* ==================== MOBILE LAYOUT (< lg) ==================== */}
+        <div className="lg:hidden flex flex-col h-[calc(100dvh-140px)]">
+          {/* Mobile Content Area - takes remaining space above bottom nav */}
+          <div className="flex-1 overflow-hidden pb-16">
+            {/* Dashboard View */}
+            {mobileView === 'dashboard' && (
+              <div className="h-full overflow-y-auto px-4 py-4 space-y-4">
                 {/* Quick Actions */}
                 <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
-                  <h2 className="text-sm font-semibold text-slate-400 mb-4">Quick Actions</h2>
-                  <div className="flex flex-wrap gap-3">
+                  <h2 className="text-sm font-semibold text-slate-400 mb-3">Quick Actions</h2>
+                  <div className="grid grid-cols-2 gap-2">
                     {isRunning ? (
                       <button
                         onClick={handleStop}
-                        className="flex items-center gap-2 px-4 py-2.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors"
+                        className="flex items-center justify-center gap-2 px-4 py-3 bg-red-500/20 text-red-400 rounded-lg active:bg-red-500/30 transition-colors touch-manipulation"
                       >
-                        <Square className="w-4 h-4" />
+                        <Square className="w-5 h-5" />
                         Stop
                       </button>
                     ) : (
@@ -573,61 +774,37 @@ function ProjectPage() {
                           <button
                             onClick={handleRun}
                             disabled={isCloning}
-                            className="flex items-center gap-2 px-4 py-2.5 bg-terminal-green/20 text-terminal-green rounded-lg hover:bg-terminal-green/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                            className="flex items-center justify-center gap-2 px-4 py-3 bg-terminal-green/20 text-terminal-green rounded-lg active:bg-terminal-green/30 transition-colors disabled:opacity-50 touch-manipulation"
                           >
-                            <Play className="w-4 h-4" />
+                            <Play className="w-5 h-5" />
                             Run
                           </button>
                         )}
                         <button
                           onClick={handleInstall}
                           disabled={isCloning}
-                          className="flex items-center gap-2 px-4 py-2.5 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                          className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-500/20 text-blue-400 rounded-lg active:bg-blue-500/30 transition-colors disabled:opacity-50 touch-manipulation"
                         >
-                          <Download className="w-4 h-4" />
+                          <Download className="w-5 h-5" />
                           Install
                         </button>
                         <button
                           onClick={handlePull}
                           disabled={isCloning}
-                          className="flex items-center gap-2 px-4 py-2.5 bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                          className="flex items-center justify-center gap-2 px-4 py-3 bg-purple-500/20 text-purple-400 rounded-lg active:bg-purple-500/30 transition-colors disabled:opacity-50 touch-manipulation"
                         >
-                          <GitPullRequest className="w-4 h-4" />
+                          <GitPullRequest className="w-5 h-5" />
                           Pull
                         </button>
-                        {project.run_notebook_enabled && (
-                          <button
-                            onClick={handleRunDefaultNotebook}
-                            disabled={isCloning || runningNotebook}
-                            className="flex items-center gap-2 px-4 py-2.5 bg-orange-500/20 text-orange-400 rounded-lg hover:bg-orange-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
-                            title={project.default_notebook || 'No notebook configured'}
-                          >
-                            {runningNotebook ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <FileCode className="w-4 h-4" />
-                            )}
-                            Notebook
-                          </button>
-                        )}
+                        <button
+                          onClick={handleOpenSettings}
+                          className="flex items-center justify-center gap-2 px-4 py-3 bg-slate-800 text-slate-300 rounded-lg active:bg-slate-700 transition-colors touch-manipulation"
+                        >
+                          <Settings className="w-5 h-5" />
+                          Settings
+                        </button>
                       </>
                     )}
-                    <div className="flex items-center gap-2 ml-auto">
-                      <button
-                        onClick={handleOpenSettings}
-                        className="p-2.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors touch-manipulation"
-                        title="Settings"
-                      >
-                        <Settings className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={fetchData}
-                        className="p-2.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors touch-manipulation"
-                        title="Refresh"
-                      >
-                        <RefreshCw className="w-4 h-4" />
-                      </button>
-                    </div>
                   </div>
                 </section>
 
@@ -637,6 +814,7 @@ function ProjectPage() {
                     projectId={projectId}
                     onJobStarted={(job) => {
                       setSelectedJobId(job.id);
+                      setMobileView('logs');
                       clearLogs();
                     }}
                     onCommandsChange={fetchData}
@@ -648,7 +826,10 @@ function ProjectPage() {
                 <CommandSection
                   projectId={projectId}
                   commands={commands}
-                  onRunCommand={handleRunCommand}
+                  onRunCommand={(commandId) => {
+                    handleRunCommand(commandId);
+                    setMobileView('logs');
+                  }}
                   onCommandsChange={fetchData}
                   disabled={isRunning || isCloning}
                   isAdmin={isAdmin}
@@ -656,52 +837,53 @@ function ProjectPage() {
 
                 {/* Job History */}
                 <section className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
-                  <h2 className="text-sm font-semibold text-slate-400 mb-4">Job History</h2>
+                  <h2 className="text-sm font-semibold text-slate-400 mb-3">Job History</h2>
                   {jobs.length === 0 ? (
                     <p className="text-slate-500 text-sm">No jobs yet</p>
                   ) : (
-                    <div className="space-y-1 max-h-64 overflow-y-auto">
+                    <div className="space-y-1">
                       {jobs.slice(0, 10).map((job) => (
                         <div
                           key={job.id}
-                          onClick={() => handleSelectJob(job.id)}
-                          className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer group ${
+                          onClick={() => {
+                            handleSelectJob(job.id);
+                            setMobileView('logs');
+                          }}
+                          className={`flex items-center gap-3 px-3 py-3 rounded-lg text-sm transition-colors cursor-pointer active:bg-slate-700 touch-manipulation ${
                             selectedJobId === job.id
                               ? 'bg-terminal-green/10 text-terminal-green'
-                              : 'hover:bg-slate-800'
+                              : 'bg-slate-800/50'
                           }`}
                         >
                           {job.status === 'running' && (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin text-terminal-green flex-shrink-0" />
+                            <Loader2 className="w-4 h-4 animate-spin text-terminal-green flex-shrink-0" />
                           )}
                           {job.status === 'completed' && (
-                            <CheckCircle2 className="w-3.5 h-3.5 text-terminal-green flex-shrink-0" />
+                            <CheckCircle2 className="w-4 h-4 text-terminal-green flex-shrink-0" />
                           )}
                           {job.status === 'failed' && (
-                            <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+                            <XCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
                           )}
                           {job.status === 'stopped' && (
-                            <Square className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
+                            <Square className="w-4 h-4 text-yellow-400 flex-shrink-0" />
                           )}
                           {job.status === 'pending' && (
-                            <Clock className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+                            <Clock className="w-4 h-4 text-slate-500 flex-shrink-0" />
                           )}
 
-                          <span className={`flex-1 truncate ${selectedJobId === job.id ? '' : getJobTypeColor(job.command_name)}`} title={job.command_executed || ''}>
-                            #{job.id} {job.command_executed
-                              ? `- ${job.command_executed.length > 40 ? job.command_executed.substring(0, 40) + '...' : job.command_executed}`
-                              : job.command_name && `- ${job.command_name}`}
+                          <span className={`flex-1 truncate ${selectedJobId === job.id ? '' : getJobTypeColor(job.command_name)}`}>
+                            #{job.id} {job.command_name || 'command'}
                           </span>
                           <span className="text-xs text-slate-500 flex-shrink-0">
-                            {new Date(job.start_time).toLocaleTimeString()}
+                            {new Date(job.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
+                          {/* Delete button always visible on mobile */}
                           {job.status !== 'running' && (
                             <button
                               onClick={(e) => handleDeleteJob(job.id, e)}
-                              className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all flex-shrink-0 touch-manipulation"
-                              title="Delete job"
+                              className="p-2 text-slate-500 active:text-red-400 active:bg-red-500/10 rounded flex-shrink-0 touch-manipulation"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           )}
                         </div>
@@ -709,40 +891,95 @@ function ProjectPage() {
                     </div>
                   )}
                 </section>
-              </>
-            ) : activeTab === 'files' ? (
-              /* Files Tab - Full width with split pane */
-              <div className="h-[calc(100vh-240px)]">
-                <TensorBoardWidget projectId={projectId} />
-                <FileExplorer projectId={projectId} fullWidth />
+
+                {/* Secrets & Schedules Links */}
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => setActiveTab('secrets')}
+                    className="flex items-center justify-center gap-2 px-4 py-3 bg-yellow-500/10 text-yellow-400 rounded-lg border border-yellow-500/20 active:bg-yellow-500/20 touch-manipulation"
+                  >
+                    <Key className="w-5 h-5" />
+                    Secrets
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('schedules')}
+                    className="flex items-center justify-center gap-2 px-4 py-3 bg-purple-500/10 text-purple-400 rounded-lg border border-purple-500/20 active:bg-purple-500/20 touch-manipulation"
+                  >
+                    <Clock className="w-5 h-5" />
+                    Schedules
+                  </button>
+                </div>
               </div>
-            ) : activeTab === 'secrets' ? (
-              /* Secrets Tab */
-              <EnvEditor projectId={projectId} />
-            ) : activeTab === 'schedules' ? (
-              /* Schedules Tab */
-              <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
-                <ScheduleManager projectId={parseInt(projectId)} />
+            )}
+
+            {/* Files View */}
+            {mobileView === 'files' && (
+              <div className="h-full">
+                <FileExplorer projectId={projectId} fullWidth isMobile />
               </div>
-            ) : null}
+            )}
+
+            {/* Logs View */}
+            {mobileView === 'logs' && (
+              <div className="h-full p-2">
+                <LogViewer
+                  logs={logs}
+                  isConnected={isConnected}
+                  isComplete={isComplete}
+                  error={wsError}
+                  jobId={selectedJobId}
+                  onClear={() => {
+                    setSelectedJobId(null);
+                    clearLogs();
+                  }}
+                  isMobile
+                />
+              </div>
+            )}
           </div>
 
-          {/* Right column: Log Viewer - HIDDEN when Files tab is active */}
-          {activeTab !== 'files' && (
-            <div className="lg:sticky lg:top-6 h-[calc(100vh-200px)]">
-              <LogViewer
-                logs={logs}
-                isConnected={isConnected}
-                isComplete={isComplete}
-                error={wsError}
-                jobId={selectedJobId}
-                onClear={() => {
-                  setSelectedJobId(null);
-                  clearLogs();
-                }}
-              />
+          {/* Mobile Bottom Navigation - Sticky */}
+          <nav className="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 px-2 py-2 pb-safe z-40">
+            <div className="flex justify-around items-center max-w-md mx-auto">
+              <button
+                onClick={() => setMobileView('dashboard')}
+                className={`flex flex-col items-center gap-1 px-4 py-2 rounded-lg transition-colors touch-manipulation min-w-[72px] ${
+                  mobileView === 'dashboard'
+                    ? 'text-terminal-green bg-terminal-green/10'
+                    : 'text-slate-400 active:text-slate-200'
+                }`}
+              >
+                <LayoutDashboard className="w-5 h-5" />
+                <span className="text-xs font-medium">Dashboard</span>
+              </button>
+              <button
+                onClick={() => setMobileView('files')}
+                className={`flex flex-col items-center gap-1 px-4 py-2 rounded-lg transition-colors touch-manipulation min-w-[72px] ${
+                  mobileView === 'files'
+                    ? 'text-terminal-green bg-terminal-green/10'
+                    : 'text-slate-400 active:text-slate-200'
+                }`}
+              >
+                <FolderOpen className="w-5 h-5" />
+                <span className="text-xs font-medium">Files</span>
+              </button>
+              <button
+                onClick={() => setMobileView('logs')}
+                className={`flex flex-col items-center gap-1 px-4 py-2 rounded-lg transition-colors touch-manipulation min-w-[72px] relative ${
+                  mobileView === 'logs'
+                    ? 'text-terminal-green bg-terminal-green/10'
+                    : 'text-slate-400 active:text-slate-200'
+                }`}
+              >
+                <ScrollText className="w-5 h-5" />
+                <span className="text-xs font-medium">Logs</span>
+                {/* Running indicator */}
+                {isRunning && mobileView !== 'logs' && (
+                  <span className="absolute top-1 right-3 w-2 h-2 bg-terminal-green rounded-full animate-pulse" />
+                )}
+              </button>
             </div>
-          )}
+          </nav>
         </div>
       </main>
 

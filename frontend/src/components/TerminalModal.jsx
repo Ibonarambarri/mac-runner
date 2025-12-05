@@ -287,7 +287,7 @@ export function TerminalModal({ isOpen, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm">
-      <div className="bg-slate-950 w-full h-full sm:h-[90vh] sm:max-w-5xl sm:rounded-xl border border-slate-800 flex flex-col overflow-hidden">
+      <div className="bg-slate-950 w-full h-[100dvh] sm:h-[90vh] sm:max-w-5xl sm:rounded-xl border border-slate-800 flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50 flex-shrink-0">
           <div className="flex items-center gap-3">

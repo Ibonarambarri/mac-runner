@@ -103,8 +103,10 @@ function isMarkdown(extension) {
  * VS Code-style file browser with split pane.
  * Left side: File tree
  * Right side: File preview/editor
+ *
+ * Mobile: Single view with fullscreen file preview
  */
-export function FileExplorer({ projectId, fullWidth = false }) {
+export function FileExplorer({ projectId, fullWidth = false, isMobile = false }) {
   const [currentPath, setCurrentPath] = useState('');
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -130,6 +132,9 @@ export function FileExplorer({ projectId, fullWidth = false }) {
 
   // Markdown view mode (rendered vs source)
   const [showMarkdownSource, setShowMarkdownSource] = useState(false);
+
+  // Mobile: show file preview fullscreen
+  const [mobileShowPreview, setMobileShowPreview] = useState(false);
 
   // Fetch files for current path
   const fetchFiles = useCallback(async () => {
@@ -200,6 +205,10 @@ export function FileExplorer({ projectId, fullWidth = false }) {
     } else if (!selectMode) {
       // Preview the file
       await loadPreview(file);
+      // On mobile, show fullscreen preview
+      if (isMobile) {
+        setMobileShowPreview(true);
+      }
     }
   };
 
@@ -249,6 +258,7 @@ export function FileExplorer({ projectId, fullWidth = false }) {
     setHasUnsavedChanges(false);
     setSaveError(null);
     setShowMarkdownSource(false);
+    setMobileShowPreview(false);
   };
 
   // Enter edit mode
@@ -315,8 +325,194 @@ export function FileExplorer({ projectId, fullWidth = false }) {
   const breadcrumbParts = currentPath ? currentPath.split('/').filter(Boolean) : [];
 
   // Determine if we're in full-width split mode
-  const showSplitView = fullWidth;
+  const showSplitView = fullWidth && !isMobile;
 
+  // ==================== MOBILE LAYOUT ====================
+  if (isMobile) {
+    return (
+      <div className="h-full flex flex-col bg-slate-900/50">
+        {/* Mobile: Fullscreen file preview overlay */}
+        {mobileShowPreview && previewFile && (
+          <div className="absolute inset-0 z-30 bg-slate-950 flex flex-col">
+            {/* Mobile Preview Header */}
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900 flex-shrink-0">
+              <button
+                onClick={closePreview}
+                className="p-2 -ml-2 text-slate-400 active:text-slate-200 active:bg-slate-800 rounded-lg transition-colors touch-manipulation"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-slate-200 truncate">{previewFile.name}</p>
+                <p className="text-xs text-slate-500">{formatSize(previewFile.size)}</p>
+              </div>
+              {/* Mobile action buttons */}
+              <div className="flex items-center gap-1">
+                {previewContent?.type === 'text' && isEditable(previewFile.extension) && !isEditing && (
+                  <button
+                    onClick={enterEditMode}
+                    className="p-2.5 text-blue-400 active:bg-blue-500/20 rounded-lg transition-colors touch-manipulation"
+                  >
+                    <Edit3 className="w-5 h-5" />
+                  </button>
+                )}
+                {isEditing && (
+                  <>
+                    <button
+                      onClick={handleSave}
+                      disabled={isSaving || !hasUnsavedChanges}
+                      className={`p-2.5 rounded-lg transition-colors touch-manipulation ${
+                        hasUnsavedChanges ? 'text-terminal-green active:bg-terminal-green/20' : 'text-slate-600'
+                      }`}
+                    >
+                      <Save className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={cancelEdit}
+                      className="p-2.5 text-slate-400 active:bg-slate-800 rounded-lg transition-colors touch-manipulation"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </>
+                )}
+                <a
+                  href={getFileDownloadUrl(projectId, previewFile.path)}
+                  className="p-2.5 text-terminal-green active:bg-terminal-green/20 rounded-lg transition-colors touch-manipulation"
+                >
+                  <Download className="w-5 h-5" />
+                </a>
+              </div>
+            </div>
+
+            {/* Mobile Preview Content */}
+            <div className="flex-1 overflow-auto">
+              {previewLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <Loader2 className="w-8 h-8 animate-spin text-terminal-green" />
+                </div>
+              ) : previewError ? (
+                <div className="flex items-center justify-center h-full p-4">
+                  <p className="text-red-400 text-sm text-center">{previewError}</p>
+                </div>
+              ) : previewContent?.type === 'notebook' ? (
+                <div
+                  className="p-4 notebook-preview"
+                  dangerouslySetInnerHTML={{ __html: previewContent.html }}
+                  style={{ backgroundColor: '#fff', color: '#000' }}
+                />
+              ) : previewContent?.type === 'image' ? (
+                <div className="flex items-center justify-center h-full p-4">
+                  <img
+                    src={previewContent.url}
+                    alt={previewFile.name}
+                    className="max-w-full max-h-full object-contain"
+                  />
+                </div>
+              ) : previewContent?.type === 'text' ? (
+                isEditing ? (
+                  <div className="h-full flex flex-col">
+                    {saveError && (
+                      <div className="px-4 py-2 bg-red-500/20 text-red-400 text-sm">
+                        Error: {saveError}
+                      </div>
+                    )}
+                    <textarea
+                      value={editContent}
+                      onChange={handleContentChange}
+                      className="flex-1 w-full p-4 text-sm text-slate-200 font-mono bg-slate-950 resize-none focus:outline-none"
+                      spellCheck={false}
+                      autoFocus
+                    />
+                  </div>
+                ) : isMarkdown(previewFile.extension) && !showMarkdownSource ? (
+                  <div className="p-4">
+                    <MarkdownRenderer content={previewContent.content} />
+                  </div>
+                ) : (
+                  <pre className="p-4 text-sm text-slate-200 font-mono whitespace-pre-wrap break-all">
+                    {previewContent.content}
+                  </pre>
+                )
+              ) : previewContent?.type === 'binary' ? (
+                <div className="flex flex-col items-center justify-center h-full p-4 gap-4">
+                  <File className="w-16 h-16 text-slate-500" />
+                  <p className="text-slate-400 text-sm">Binary file</p>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        )}
+
+        {/* Mobile: File list header */}
+        <div className="border-b border-slate-800 p-3 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            {currentPath && (
+              <button
+                onClick={goBack}
+                className="p-2 -ml-2 text-slate-400 active:text-slate-200 active:bg-slate-800 rounded-lg transition-colors touch-manipulation"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
+            <button
+              onClick={() => navigateTo('')}
+              className={`p-2 text-slate-400 active:text-slate-200 active:bg-slate-800 rounded-lg transition-colors touch-manipulation ${!currentPath ? '-ml-2' : ''}`}
+            >
+              <Home className="w-5 h-5" />
+            </button>
+            {currentPath && (
+              <span className="text-sm text-slate-300 truncate flex-1">
+                {currentPath.split('/').pop() || 'Root'}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Mobile: File list */}
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="flex items-center justify-center h-32">
+              <Loader2 className="w-6 h-6 animate-spin text-terminal-green" />
+            </div>
+          ) : error ? (
+            <div className="p-4 text-red-400 text-sm">{error}</div>
+          ) : files.length === 0 ? (
+            <div className="p-4 text-slate-500 text-sm text-center">Empty folder</div>
+          ) : (
+            <div className="divide-y divide-slate-800/50">
+              {files.map((file) => {
+                const FileIcon = getFileIcon(file.extension, file.is_directory);
+                return (
+                  <button
+                    key={file.path}
+                    onClick={() => handleFileClick(file)}
+                    className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-slate-800 transition-colors touch-manipulation"
+                  >
+                    <FileIcon className={`w-5 h-5 flex-shrink-0 ${
+                      file.is_directory ? 'text-yellow-400' : 'text-slate-400'
+                    }`} />
+                    <span className="flex-1 text-sm text-slate-200 truncate">
+                      {file.name}
+                    </span>
+                    {!file.is_directory && (
+                      <span className="text-xs text-slate-500 flex-shrink-0">
+                        {formatSize(file.size)}
+                      </span>
+                    )}
+                    {file.is_directory && (
+                      <ChevronRight className="w-4 h-4 text-slate-500 flex-shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ==================== DESKTOP LAYOUT ====================
   return (
     <div className={`bg-slate-900/50 border border-slate-800 rounded-lg overflow-hidden ${showSplitView ? 'h-full' : ''}`}>
       {showSplitView ? (

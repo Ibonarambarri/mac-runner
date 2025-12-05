@@ -206,7 +206,7 @@ export function ResourceMonitor() {
 
       {/* Expanded view (dropdown) */}
       {expanded && (
-        <div className="absolute top-full right-0 mt-2 w-72 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-50 p-4 space-y-4">
+        <div className="absolute top-full right-0 mt-2 w-[calc(100vw-2rem)] sm:w-72 max-w-72 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-50 p-4 space-y-4">
           {/* CPU Details */}
           <div>
             <div className="flex items-center justify-between mb-2">
