@@ -115,7 +115,7 @@ def get_environment_path(workspace: Path, env_type: EnvironmentType) -> Path:
     Returns:
         Path to environment directory
     """
-    if env_type == EnvironmentType.CONDA:
+    if env_type == EnvironmentType.conda:
         return workspace / "env"  # conda uses ./env
     else:
         return workspace / "venv"  # venv uses ./venv
@@ -553,10 +553,10 @@ class ProcessManager:
                 return False
 
             # Create Python environment based on environment_type
-            env_type = project.environment_type or EnvironmentType.VENV
+            env_type = project.environment_type or EnvironmentType.venv
             python_version = project.python_version
 
-            if env_type == EnvironmentType.CONDA:
+            if env_type == EnvironmentType.conda:
                 # Create conda environment
                 env_created = await self._create_conda_environment(
                     workspace, python_version
@@ -729,13 +729,13 @@ class ProcessManager:
             return False
 
         workspace = Path(project.workspace_path)
-        env_type = project.environment_type or EnvironmentType.VENV
+        env_type = project.environment_type or EnvironmentType.venv
         env_path = get_environment_path(workspace, env_type)
 
         # Check if environment directory exists
         if env_path.exists():
             # Additional check: verify Python executable exists
-            if env_type == EnvironmentType.CONDA:
+            if env_type == EnvironmentType.conda:
                 python_check = env_path / "bin" / "python"
             else:
                 python_check = env_path / "bin" / "python"
@@ -749,7 +749,7 @@ class ProcessManager:
         # Environment doesn't exist, try to recreate it
         print(f"[WARN] Environment not found at {env_path}, attempting to recreate...")
 
-        if env_type == EnvironmentType.CONDA:
+        if env_type == EnvironmentType.conda:
             success = await self._create_conda_environment(
                 workspace, project.python_version
             )
@@ -824,9 +824,9 @@ class ProcessManager:
         Returns:
             Shell command string for environment activation
         """
-        env_type = project.environment_type or EnvironmentType.VENV
+        env_type = project.environment_type or EnvironmentType.venv
 
-        if env_type == EnvironmentType.CONDA:
+        if env_type == EnvironmentType.conda:
             env_path = workspace / "env"
             conda_exe = find_conda_executable()
 
@@ -858,10 +858,10 @@ class ProcessManager:
         Returns:
             Full shell command with activation
         """
-        env_type = project.environment_type or EnvironmentType.VENV
+        env_type = project.environment_type or EnvironmentType.venv
         activation = self._get_activation_command(project, workspace)
 
-        if env_type == EnvironmentType.CONDA:
+        if env_type == EnvironmentType.conda:
             # conda run already wraps the command
             return f'{activation} {command}'
         else:

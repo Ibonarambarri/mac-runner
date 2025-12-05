@@ -24,8 +24,9 @@ class ProjectStatus(str, Enum):
 
 class EnvironmentType(str, Enum):
     """Type of Python environment for a project."""
-    VENV = "venv"
-    CONDA = "conda"
+    # Using lowercase names to match frontend values and database storage
+    venv = "venv"
+    conda = "conda"
 
 
 class JobStatus(str, Enum):
@@ -46,7 +47,7 @@ class ProjectBase(SQLModel):
     run_command_enabled: bool = True  # Toggle to enable/disable run command
     run_notebook_enabled: bool = False  # Toggle to enable/disable notebook execution
     default_notebook: Optional[str] = None  # Path to default notebook to run
-    environment_type: EnvironmentType = Field(default=EnvironmentType.VENV)  # venv or conda
+    environment_type: EnvironmentType = Field(default=EnvironmentType.venv)  # venv or conda
     python_version: Optional[str] = None  # Python version (e.g., "3.9", "3.11"). None = system default
 
 
