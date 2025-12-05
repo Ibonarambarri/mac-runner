@@ -165,6 +165,56 @@ class CommandTemplateRead(CommandTemplateBase):
 
 
 # ============================================================================
+# SCHEDULED TASK MODELS
+# ============================================================================
+
+class ScheduledTaskBase(SQLModel):
+    """Base model for ScheduledTask."""
+    name: str = Field(index=True)
+    command: str
+    cron_expression: str  # Cron format: "0 9 * * *" (9am daily)
+    enabled: bool = True
+    description: Optional[str] = None
+
+
+class ScheduledTask(ScheduledTaskBase, table=True):
+    """
+    ScheduledTask table - stores scheduled/recurring tasks.
+    Supports cron expressions for flexible scheduling.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    created_at: datetime = Field(default_factory=utc_now)
+    last_run: Optional[datetime] = None
+    next_run: Optional[datetime] = None
+    last_job_id: Optional[int] = None  # ID of the last job created by this schedule
+
+
+class ScheduledTaskCreate(ScheduledTaskBase):
+    """Schema for creating a scheduled task."""
+    project_id: int
+
+
+class ScheduledTaskUpdate(SQLModel):
+    """Schema for updating a scheduled task."""
+    name: Optional[str] = None
+    command: Optional[str] = None
+    cron_expression: Optional[str] = None
+    enabled: Optional[bool] = None
+    description: Optional[str] = None
+
+
+class ScheduledTaskRead(ScheduledTaskBase):
+    """Schema for reading a scheduled task."""
+    id: int
+    project_id: int
+    created_at: datetime
+    last_run: Optional[datetime]
+    next_run: Optional[datetime]
+    last_job_id: Optional[int]
+
+
+# ============================================================================
 # FILE EXPLORER MODELS
 # ============================================================================
 

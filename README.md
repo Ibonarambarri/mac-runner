@@ -8,10 +8,12 @@ Sistema de orquestación de tareas para ejecutar y gestionar proyectos Python en
 
 | Componente | Versión mínima | Notas |
 |------------|----------------|-------|
-| **macOS** | 10.15+ | También compatible con Linux/Windows |
+| **macOS** | 10.15+ | También compatible con Linux |
 | **Node.js** | 14.0+ | npm incluido |
 | **Python** | 3.8+ | pip incluido |
 | **Git** | 2.0+ | Para clonar repositorios |
+
+> **Nota:** MacRunner **no es compatible con Windows** debido al uso de módulos exclusivos de Unix/macOS (`pty`, `fcntl`) para la terminal integrada.
 
 ### Puertos requeridos
 
@@ -261,6 +263,16 @@ http://<nombre-de-tu-mac>.tailnet-xxxx.ts.net:5173
 1. Verifica que Git está instalado y configurado
 2. Para repositorios privados, asegúrate de tener las credenciales configuradas
 3. Comprueba la conectividad a GitHub
+
+### Repositorios privados con SSH
+
+Si usas repositorios privados vía SSH (`git@github.com:...`), asegúrate de:
+1. Tener las claves SSH configuradas en tu máquina (`~/.ssh/id_rsa` o `~/.ssh/id_ed25519`)
+2. Que el agente SSH esté corriendo: `eval "$(ssh-agent -s)"`
+3. Añadir tu clave al agente: `ssh-add ~/.ssh/id_ed25519`
+4. Que la clave esté registrada en tu cuenta de GitHub/GitLab
+
+MacRunner usa el agente SSH del sistema, por lo que no requiere configuración adicional una vez que Git funciona en tu terminal.
 
 ## Desarrollo
 

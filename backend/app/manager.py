@@ -1909,6 +1909,141 @@ class ProcessManager:
                     await queue.put({"type": "error", "data": error_msg})
 
 
+# =============================================================================
+# SYSTEM SCRIPTS FUNCTIONS
+# =============================================================================
+
+# Path to system scripts folder (relative to this file)
+SYSTEM_SCRIPTS_PATH = Path(__file__).parent.parent / "system_scripts"
+
+
+def list_system_scripts() -> List[dict]:
+    """
+    List all available system scripts (.sh and .py files).
+
+    Returns:
+        List of script info dictionaries with name, description, and type.
+    """
+    scripts = []
+
+    if not SYSTEM_SCRIPTS_PATH.exists():
+        SYSTEM_SCRIPTS_PATH.mkdir(parents=True, exist_ok=True)
+        return scripts
+
+    for script_file in sorted(SYSTEM_SCRIPTS_PATH.iterdir()):
+        if script_file.suffix not in (".sh", ".py"):
+            continue
+        if script_file.name.startswith("."):
+            continue
+
+        # Try to extract description from first comment line
+        description = ""
+        try:
+            with open(script_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("#") and not line.startswith("#!"):
+                        # Remove # and whitespace
+                        description = line.lstrip("#").strip()
+                        break
+                    elif line.startswith('"""') or line.startswith("'''"):
+                        # Python docstring - get next line
+                        description = next(f, "").strip().strip('"""').strip("'''")
+                        break
+                    elif line and not line.startswith("#!"):
+                        # Non-comment line reached
+                        break
+        except Exception:
+            pass
+
+        script_type = "bash" if script_file.suffix == ".sh" else "python"
+
+        scripts.append({
+            "name": script_file.name,
+            "display_name": script_file.stem.replace("_", " ").replace("-", " ").title(),
+            "description": description or f"System {script_type} script",
+            "type": script_type,
+            "path": str(script_file)
+        })
+
+    return scripts
+
+
+async def run_system_script(
+    script_name: str,
+    log_callback: Optional[callable] = None
+) -> tuple[int, str]:
+    """
+    Execute a system script.
+
+    Args:
+        script_name: Name of the script file (e.g., "clean_docker.sh")
+        log_callback: Optional async callback for real-time log output
+
+    Returns:
+        Tuple of (return_code, full_output)
+
+    Raises:
+        ValueError: If script not found or invalid
+    """
+    script_path = SYSTEM_SCRIPTS_PATH / script_name
+
+    # Validate script exists
+    if not script_path.exists():
+        raise ValueError(f"Script not found: {script_name}")
+
+    if not script_path.suffix in (".sh", ".py"):
+        raise ValueError(f"Invalid script type: {script_name}")
+
+    # Ensure script is within system_scripts directory (path traversal protection)
+    try:
+        script_path.resolve().relative_to(SYSTEM_SCRIPTS_PATH.resolve())
+    except ValueError:
+        raise ValueError("Invalid script path")
+
+    # Build command based on script type
+    if script_path.suffix == ".sh":
+        cmd = ["bash", str(script_path)]
+    else:
+        cmd = ["python3", str(script_path)]
+
+    # Environment
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+
+    output_lines = []
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=env,
+            cwd=str(SYSTEM_SCRIPTS_PATH)
+        )
+
+        # Read output line by line
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+
+            decoded = line.decode("utf-8", errors="replace")
+            output_lines.append(decoded)
+
+            if log_callback:
+                await log_callback(decoded)
+
+        return_code = await process.wait()
+        return return_code, "".join(output_lines)
+
+    except Exception as e:
+        error_msg = f"Error executing script: {e}\n"
+        if log_callback:
+            await log_callback(error_msg)
+        return 1, error_msg
+
+
 # Global process manager instance
 # Initialized in main.py with proper paths
 process_manager: Optional[ProcessManager] = None

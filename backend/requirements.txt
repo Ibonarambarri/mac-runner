@@ -8,3 +8,4 @@ nbconvert>=7.0.0
 papermill>=2.4.0
 ipykernel>=6.0.0
 jupyterlab>=4.0.0
+apscheduler>=3.10.0

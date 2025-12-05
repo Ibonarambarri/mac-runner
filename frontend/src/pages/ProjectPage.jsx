@@ -31,6 +31,7 @@ import { QuickRun } from '../components/QuickRun';
 import { FileExplorer } from '../components/FileExplorer';
 import { EnvEditor } from '../components/EnvEditor';
 import { TensorBoardWidget } from '../components/TensorBoardWidget';
+import { ScheduleManager } from '../components/ScheduleManager';
 import { useLogStream } from '../hooks/useLogStream';
 import {
   getProject,
@@ -117,7 +118,7 @@ function ProjectPage() {
   const [selectedJobId, setSelectedJobId] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('actions'); // 'actions' | 'files' | 'secrets'
+  const [activeTab, setActiveTab] = useState('actions'); // 'actions' | 'files' | 'secrets' | 'schedules'
 
   // Settings modal state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -508,6 +509,17 @@ function ProjectPage() {
             <Key className="w-4 h-4" />
             Secrets
           </button>
+          <button
+            onClick={() => setActiveTab('schedules')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors touch-manipulation ${
+              activeTab === 'schedules'
+                ? 'bg-purple-500/20 text-purple-400'
+                : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Clock className="w-4 h-4" />
+            Schedules
+          </button>
         </div>
 
         {/* Conditional layout: Full width for files, 2-column for others */}
@@ -675,10 +687,15 @@ function ProjectPage() {
                 <TensorBoardWidget projectId={projectId} />
                 <FileExplorer projectId={projectId} fullWidth />
               </div>
-            ) : (
+            ) : activeTab === 'secrets' ? (
               /* Secrets Tab */
               <EnvEditor projectId={projectId} />
-            )}
+            ) : activeTab === 'schedules' ? (
+              /* Schedules Tab */
+              <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
+                <ScheduleManager projectId={parseInt(projectId)} />
+              </div>
+            ) : null}
           </div>
 
           {/* Right column: Log Viewer - HIDDEN when Files tab is active */}

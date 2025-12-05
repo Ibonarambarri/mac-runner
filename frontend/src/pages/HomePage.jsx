@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Terminal, Plus, RefreshCw, Cpu, TerminalSquare } from 'lucide-react';
+import { Terminal, Plus, RefreshCw, Cpu, TerminalSquare, Wrench } from 'lucide-react';
 
 import { ProjectCard } from '../components/ProjectCard';
 import { NewProjectModal } from '../components/NewProjectModal';
+import { SystemScripts } from '../components/SystemScripts';
 import { useTerminal } from '../contexts/TerminalContext';
 import { getProjects, createProject, deleteProject } from '../api';
 
@@ -160,6 +161,18 @@ function HomePage() {
             ))}
           </div>
         )}
+
+        {/* System Scripts Section */}
+        <div className="mt-8 pt-6 border-t border-slate-800">
+          <div className="flex items-center gap-2 mb-4">
+            <Wrench className="w-5 h-5 text-terminal-green" />
+            <h2 className="text-base sm:text-lg font-semibold text-slate-300">System Scripts</h2>
+          </div>
+          <p className="text-xs text-slate-500 mb-4">
+            Quick maintenance scripts for system-level tasks
+          </p>
+          <SystemScripts />
+        </div>
       </main>
 
       {/* New Project Modal */}

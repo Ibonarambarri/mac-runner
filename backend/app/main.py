@@ -7,6 +7,7 @@ import asyncio
 import os
 import socket
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -22,10 +23,16 @@ from .models import (
     Project, ProjectCreate, ProjectRead, ProjectUpdate,
     Job, JobRead, JobStatus, ProjectStatus,
     CommandTemplate, CommandTemplateCreate, CommandTemplateRead, CommandTemplateUpdate,
-    FileInfo
+    FileInfo,
+    ScheduledTask, ScheduledTaskCreate, ScheduledTaskRead, ScheduledTaskUpdate
 )
 from .manager import init_process_manager, get_process_manager
 from .websockets import stream_logs, handle_terminal, handle_status_websocket, broadcast_status_update
+from .scheduler import (
+    init_scheduler, start_scheduler, shutdown_scheduler,
+    add_scheduled_job, remove_scheduled_job, update_scheduled_job,
+    get_scheduler_status, CRON_PRESETS
+)
 
 
 # Application base path (parent of /app)
@@ -87,7 +94,7 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     create_db_and_tables()
-    init_process_manager(BASE_PATH)
+    manager = init_process_manager(BASE_PATH)
     print("🚀 MacRunner initialized")
     print(f"   Workspaces: {BASE_PATH / 'workspaces'}")
     print(f"   Logs: {BASE_PATH / 'logs'}")
@@ -96,7 +103,15 @@ async def lifespan(app: FastAPI):
     restore_jupyter_processes()
     restore_tensorboard_processes()
 
+    # Initialize and start the task scheduler
+    init_scheduler(manager)
+    start_scheduler()
+    print("⏰ Task scheduler started")
+
     yield
+
+    # Shutdown scheduler
+    shutdown_scheduler()
 
     # Shutdown - stop all running processes
     manager = get_process_manager()
@@ -2038,6 +2053,53 @@ async def get_system_status():
         except Exception:
             pass
 
+    # Additional memory details
+    swap = psutil.swap_memory()
+    swap_total_gb = swap.total / (1024 ** 3)
+    swap_used_gb = swap.used / (1024 ** 3)
+
+    # For macOS, get memory pressure if available
+    memory_pressure = None
+    if system == "Darwin":
+        try:
+            # Try to get memory pressure from vm_stat
+            result = subprocess.run(
+                ["vm_stat"],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            if result.returncode == 0:
+                # Parse vm_stat output to calculate pressure
+                lines = result.stdout.strip().split('\n')
+                stats = {}
+                for line in lines[1:]:
+                    if ':' in line:
+                        key, value = line.split(':')
+                        # Remove dots and convert to int
+                        value = value.strip().rstrip('.')
+                        if value.isdigit():
+                            stats[key.strip()] = int(value)
+
+                # Calculate approximate pressure based on page states
+                pages_active = stats.get('Pages active', 0)
+                pages_wired = stats.get('Pages wired down', 0)
+                pages_compressed = stats.get('Pages occupied by compressor', 0)
+                pages_free = stats.get('Pages free', 0)
+
+                total_pages = pages_active + pages_wired + pages_compressed + pages_free
+                if total_pages > 0:
+                    # Higher compressed pages = higher pressure
+                    pressure_ratio = (pages_compressed / total_pages) * 100
+                    if pressure_ratio > 30:
+                        memory_pressure = "critical"
+                    elif pressure_ratio > 15:
+                        memory_pressure = "warning"
+                    else:
+                        memory_pressure = "normal"
+        except Exception:
+            pass
+
     return {
         "cpu": {
             "percent": cpu_percent,
@@ -2046,15 +2108,231 @@ async def get_system_status():
         "memory": {
             "percent": memory_percent,
             "used_gb": round(memory_used_gb, 1),
-            "total_gb": round(memory_total_gb, 1)
+            "total_gb": round(memory_total_gb, 1),
+            "available_gb": round(memory.available / (1024 ** 3), 1),
+            "pressure": memory_pressure
+        },
+        "swap": {
+            "percent": swap.percent,
+            "used_gb": round(swap_used_gb, 1),
+            "total_gb": round(swap_total_gb, 1)
         },
         "disk": {
             "percent": disk_percent,
             "used_gb": round(disk_used_gb, 1),
             "total_gb": round(disk_total_gb, 1)
         },
-        "gpu": gpu_info
+        "gpu": gpu_info,
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
+
+
+# ============================================================================
+# SCHEDULER ENDPOINTS
+# ============================================================================
+
+@app.get("/scheduler/status")
+async def scheduler_status():
+    """Get the current scheduler status."""
+    return get_scheduler_status()
+
+
+@app.get("/scheduler/presets")
+async def get_cron_presets():
+    """Get available cron expression presets for the UI."""
+    return CRON_PRESETS
+
+
+@app.get("/scheduler/tasks", response_model=List[ScheduledTaskRead])
+async def list_scheduled_tasks(
+    project_id: Optional[int] = None,
+    session: Session = Depends(get_session)
+):
+    """
+    List all scheduled tasks, optionally filtered by project.
+    """
+    if project_id:
+        statement = select(ScheduledTask).where(ScheduledTask.project_id == project_id)
+    else:
+        statement = select(ScheduledTask)
+
+    tasks = session.exec(statement).all()
+    return tasks
+
+
+@app.get("/scheduler/tasks/{task_id}", response_model=ScheduledTaskRead)
+async def get_scheduled_task(
+    task_id: int,
+    session: Session = Depends(get_session)
+):
+    """Get a specific scheduled task."""
+    task = session.get(ScheduledTask, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Scheduled task not found")
+    return task
+
+
+@app.post("/scheduler/tasks", response_model=ScheduledTaskRead)
+async def create_scheduled_task(
+    task_data: ScheduledTaskCreate,
+    session: Session = Depends(get_session)
+):
+    """
+    Create a new scheduled task.
+
+    The task will be automatically added to the scheduler if enabled.
+    """
+    # Verify project exists
+    project = session.get(Project, task_data.project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Validate cron expression (basic check)
+    cron_parts = task_data.cron_expression.strip().split()
+    if len(cron_parts) != 5:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid cron expression. Format: 'minute hour day month day_of_week'"
+        )
+
+    # Create the task
+    task = ScheduledTask.model_validate(task_data)
+    session.add(task)
+    session.commit()
+    session.refresh(task)
+
+    # Add to scheduler if enabled
+    if task.enabled:
+        if not add_scheduled_job(task):
+            # Task created but failed to schedule
+            task.enabled = False
+            session.add(task)
+            session.commit()
+            session.refresh(task)
+
+    return task
+
+
+@app.patch("/scheduler/tasks/{task_id}", response_model=ScheduledTaskRead)
+async def update_scheduled_task_endpoint(
+    task_id: int,
+    task_update: ScheduledTaskUpdate,
+    session: Session = Depends(get_session)
+):
+    """
+    Update a scheduled task.
+
+    The scheduler will be updated if the cron expression or enabled status changes.
+    """
+    task = session.get(ScheduledTask, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Scheduled task not found")
+
+    # Validate cron if provided
+    if task_update.cron_expression:
+        cron_parts = task_update.cron_expression.strip().split()
+        if len(cron_parts) != 5:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid cron expression. Format: 'minute hour day month day_of_week'"
+            )
+
+    # Update fields
+    update_data = task_update.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(task, key, value)
+
+    session.add(task)
+    session.commit()
+    session.refresh(task)
+
+    # Update scheduler
+    update_scheduled_job(task)
+
+    return task
+
+
+@app.delete("/scheduler/tasks/{task_id}")
+async def delete_scheduled_task(
+    task_id: int,
+    session: Session = Depends(get_session)
+):
+    """Delete a scheduled task."""
+    task = session.get(ScheduledTask, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Scheduled task not found")
+
+    # Remove from scheduler
+    remove_scheduled_job(task_id)
+
+    # Delete from database
+    session.delete(task)
+    session.commit()
+
+    return {"status": "deleted", "task_id": task_id}
+
+
+@app.post("/scheduler/tasks/{task_id}/run")
+async def run_scheduled_task_now(
+    task_id: int,
+    session: Session = Depends(get_session)
+):
+    """
+    Run a scheduled task immediately (manual trigger).
+    """
+    from .scheduler import execute_scheduled_task
+
+    task = session.get(ScheduledTask, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Scheduled task not found")
+
+    # Execute the task asynchronously
+    asyncio.create_task(execute_scheduled_task(task_id))
+
+    return {"status": "triggered", "task_id": task_id, "task_name": task.name}
+
+
+# ============================================================================
+# SYSTEM SCRIPTS ENDPOINTS
+# ============================================================================
+
+from .manager import list_system_scripts, run_system_script
+
+
+@app.get("/system-scripts")
+async def get_system_scripts():
+    """
+    List all available system scripts.
+
+    Returns scripts from the backend/system_scripts folder.
+    """
+    scripts = list_system_scripts()
+    return {"scripts": scripts}
+
+
+@app.post("/system-scripts/run/{script_name}")
+async def execute_system_script(script_name: str):
+    """
+    Execute a system script.
+
+    Args:
+        script_name: Name of the script file (e.g., "clean_docker.sh")
+
+    Returns:
+        Script execution result with output and exit code.
+    """
+    try:
+        return_code, output = await run_system_script(script_name)
+        return {
+            "script_name": script_name,
+            "success": return_code == 0,
+            "exit_code": return_code,
+            "output": output
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error executing script: {str(e)}")
 
 
 @app.get("/health")

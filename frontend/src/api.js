@@ -391,6 +391,69 @@ export async function getTensorboardStatus(projectId) {
 }
 
 // ============================================================================
+// SCHEDULER API
+// ============================================================================
+
+/**
+ * Get scheduler status
+ */
+export async function getSchedulerStatus() {
+  return apiFetch('/scheduler/status');
+}
+
+/**
+ * Get cron expression presets
+ */
+export async function getCronPresets() {
+  return apiFetch('/scheduler/presets');
+}
+
+/**
+ * Get scheduled tasks for a project
+ */
+export async function getScheduledTasks(projectId) {
+  return apiFetch(`/scheduler/tasks?project_id=${projectId}`);
+}
+
+/**
+ * Create a new scheduled task
+ */
+export async function createScheduledTask(data) {
+  return apiFetch('/scheduler/tasks', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/**
+ * Update a scheduled task
+ */
+export async function updateScheduledTask(taskId, data) {
+  return apiFetch(`/scheduler/tasks/${taskId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+/**
+ * Delete a scheduled task
+ */
+export async function deleteScheduledTask(taskId) {
+  return apiFetch(`/scheduler/tasks/${taskId}`, {
+    method: 'DELETE',
+  });
+}
+
+/**
+ * Run a scheduled task immediately
+ */
+export async function runScheduledTaskNow(taskId) {
+  return apiFetch(`/scheduler/tasks/${taskId}/run`, {
+    method: 'POST',
+  });
+}
+
+// ============================================================================
 // SYSTEM STATUS API
 // ============================================================================
 
@@ -421,4 +484,24 @@ export function getStatusWebSocketUrl() {
   const { hostname } = window.location;
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${wsProtocol}//${hostname}:8000/ws/status`;
+}
+
+// ============================================================================
+// SYSTEM SCRIPTS API
+// ============================================================================
+
+/**
+ * List all available system scripts
+ */
+export async function getSystemScripts() {
+  return apiFetch('/system-scripts');
+}
+
+/**
+ * Execute a system script
+ */
+export async function runSystemScript(scriptName) {
+  return apiFetch(`/system-scripts/run/${encodeURIComponent(scriptName)}`, {
+    method: 'POST',
+  });
 }
