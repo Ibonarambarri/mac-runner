@@ -14,6 +14,12 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class UserRole(str, Enum):
+    """Role types for users."""
+    admin = "admin"
+    worker = "worker"
+
+
 class ProjectStatus(str, Enum):
     """Status states for a project."""
     IDLE = "idle"
@@ -226,3 +232,57 @@ class FileInfo(SQLModel):
     is_directory: bool
     size: Optional[int] = None  # File size in bytes
     extension: Optional[str] = None  # File extension for icons
+
+
+# ============================================================================
+# USER & AUTHENTICATION MODELS (RBAC)
+# ============================================================================
+
+class User(SQLModel, table=True):
+    """
+    User table - stores user credentials and roles for RBAC.
+    """
+    username: str = Field(primary_key=True)
+    hashed_password: str
+    role: UserRole = Field(default=UserRole.worker)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class UserCreate(SQLModel):
+    """Schema for creating a new user."""
+    username: str
+    password: str
+    role: UserRole = UserRole.worker
+
+
+class UserRead(SQLModel):
+    """Schema for reading a user (without password)."""
+    username: str
+    role: UserRole
+    created_at: datetime
+
+
+# ============================================================================
+# AUDIT LOG MODELS
+# ============================================================================
+
+class AuditLog(SQLModel, table=True):
+    """
+    AuditLog table - tracks user actions for security auditing.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True)
+    action: str = Field(index=True)  # e.g., "run", "install", "stop", "create_user"
+    target: Optional[str] = None  # e.g., project name, user name
+    details: Optional[str] = None  # Additional JSON details
+    timestamp: datetime = Field(default_factory=utc_now, index=True)
+
+
+class AuditLogRead(SQLModel):
+    """Schema for reading audit logs."""
+    id: int
+    username: str
+    action: str
+    target: Optional[str]
+    details: Optional[str]
+    timestamp: datetime

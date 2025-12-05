@@ -13,19 +13,64 @@ const getApiBase = () => {
 
 const API_BASE = getApiBase();
 
+// Auth storage key (must match AuthContext)
+const AUTH_STORAGE_KEY = 'macrunner_auth';
+
+// Callback for handling 401 errors (set by AuthContext)
+let onUnauthorizedCallback = null;
+
 /**
- * Generic fetch wrapper with error handling
+ * Set the callback to handle 401 unauthorized errors
+ */
+export function setUnauthorizedCallback(callback) {
+  onUnauthorizedCallback = callback;
+}
+
+/**
+ * Get stored auth credentials
+ */
+function getAuthHeader() {
+  try {
+    const stored = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (stored) {
+      const auth = JSON.parse(stored);
+      return auth.credentials;
+    }
+  } catch (e) {
+    console.error('Error reading auth:', e);
+  }
+  return null;
+}
+
+/**
+ * Generic fetch wrapper with error handling and authentication
  */
 async function apiFetch(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
+  const authHeader = getAuthHeader();
+
+  const headers = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+
+  // Add auth header if available
+  if (authHeader) {
+    headers['Authorization'] = authHeader;
+  }
 
   const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
     ...options,
+    headers,
   });
+
+  // Handle 401 Unauthorized
+  if (response.status === 401) {
+    if (onUnauthorizedCallback) {
+      onUnauthorizedCallback();
+    }
+    throw new Error('Authentication required');
+  }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
@@ -220,7 +265,21 @@ export async function listFiles(projectId, path = '') {
  */
 export async function getFileContent(projectId, path) {
   const url = `${API_BASE}/projects/${projectId}/files/content?path=${encodeURIComponent(path)}`;
-  const response = await fetch(url);
+  const authHeader = getAuthHeader();
+  const headers = {};
+  if (authHeader) {
+    headers['Authorization'] = authHeader;
+  }
+
+  const response = await fetch(url, { headers });
+
+  if (response.status === 401) {
+    if (onUnauthorizedCallback) {
+      onUnauthorizedCallback();
+    }
+    throw new Error('Authentication required');
+  }
+
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
     throw new Error(error.detail || `HTTP ${response.status}`);
@@ -503,5 +562,35 @@ export async function getSystemScripts() {
 export async function runSystemScript(scriptName) {
   return apiFetch(`/system-scripts/run/${encodeURIComponent(scriptName)}`, {
     method: 'POST',
+  });
+}
+
+// ============================================================================
+// USER MANAGEMENT API (Admin only)
+// ============================================================================
+
+/**
+ * Create a new user (Admin only)
+ */
+export async function createUser(data) {
+  return apiFetch('/admin/users/', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/**
+ * Get all users (Admin only)
+ */
+export async function getUsers() {
+  return apiFetch('/admin/users/');
+}
+
+/**
+ * Delete a user (Admin only)
+ */
+export async function deleteUser(username) {
+  return apiFetch(`/admin/users/${encodeURIComponent(username)}`, {
+    method: 'DELETE',
   });
 }

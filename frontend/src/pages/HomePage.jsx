@@ -4,9 +4,12 @@ import { Terminal, Plus, RefreshCw, Cpu, TerminalSquare, Wrench } from 'lucide-r
 
 import { ProjectCard } from '../components/ProjectCard';
 import { NewProjectModal } from '../components/NewProjectModal';
+import { CreateUserModal } from '../components/CreateUserModal';
 import { SystemScripts } from '../components/SystemScripts';
+import { UserMenu } from '../components/UserMenu';
 import { useTerminal } from '../contexts/TerminalContext';
-import { getProjects, createProject, deleteProject } from '../api';
+import { useAuth } from '../contexts/AuthContext';
+import { getProjects, createProject, deleteProject, createUser } from '../api';
 
 /**
  * HomePage Component
@@ -17,6 +20,7 @@ import { getProjects, createProject, deleteProject } from '../api';
 function HomePage() {
   const navigate = useNavigate();
   const { openTerminal } = useTerminal();
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
   // State
   const [projects, setProjects] = useState([]);
@@ -24,23 +28,37 @@ function HomePage() {
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState(null);
 
+  // Create User Modal state
+  const [showCreateUserModal, setShowCreateUserModal] = useState(false);
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
+
   // Fetch projects
   const fetchProjects = useCallback(async () => {
+    // Don't fetch if not authenticated
+    if (!isAuthenticated) return;
+
     try {
       const data = await getProjects();
       setProjects(data);
+      setError(null);
     } catch (e) {
-      setError(e.message);
+      // Don't show auth errors as banner - modal will handle it
+      if (e.message !== 'Authentication required') {
+        setError(e.message);
+      }
     }
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
+    // Wait for auth to be ready before fetching
+    if (authLoading || !isAuthenticated) return;
+
     fetchProjects();
 
     // Poll for updates every 5 seconds
     const interval = setInterval(fetchProjects, 5000);
     return () => clearInterval(interval);
-  }, [fetchProjects]);
+  }, [fetchProjects, authLoading, isAuthenticated]);
 
   // Handlers
   const handleCreateProject = async (data) => {
@@ -73,6 +91,28 @@ function HomePage() {
     navigate(`/project/${projectId}`);
   };
 
+  // Create user handler
+  const handleCreateUser = async (userData) => {
+    setIsCreatingUser(true);
+    try {
+      await createUser(userData);
+      setShowCreateUserModal(false);
+    } catch (e) {
+      throw e; // Re-throw to let modal display error
+    } finally {
+      setIsCreatingUser(false);
+    }
+  };
+
+  // Show loading while checking auth
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center">
+        <div className="text-slate-400">Loading...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       {/* Header */}
@@ -90,13 +130,16 @@ function HomePage() {
             </div>
 
             <div className="flex items-center gap-2 sm:gap-3">
-              <button
-                onClick={openTerminal}
-                className="p-2.5 sm:p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors touch-manipulation"
-                title="Terminal"
-              >
-                <TerminalSquare className="w-5 h-5" />
-              </button>
+              {/* Terminal button - only for admins */}
+              {user?.role === 'admin' && (
+                <button
+                  onClick={openTerminal}
+                  className="p-2.5 sm:p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors touch-manipulation"
+                  title="Terminal"
+                >
+                  <TerminalSquare className="w-5 h-5" />
+                </button>
+              )}
               <button
                 onClick={fetchProjects}
                 className="p-2.5 sm:p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors touch-manipulation"
@@ -112,6 +155,8 @@ function HomePage() {
                 <span className="hidden sm:inline">New Project</span>
                 <span className="sm:hidden">New</span>
               </button>
+              {/* User Menu */}
+              <UserMenu onCreateUser={() => setShowCreateUserModal(true)} />
             </div>
           </div>
         </div>
@@ -162,17 +207,19 @@ function HomePage() {
           </div>
         )}
 
-        {/* System Scripts Section */}
-        <div className="mt-8 pt-6 border-t border-slate-800">
-          <div className="flex items-center gap-2 mb-4">
-            <Wrench className="w-5 h-5 text-terminal-green" />
-            <h2 className="text-base sm:text-lg font-semibold text-slate-300">System Scripts</h2>
+        {/* System Scripts Section - Admin only */}
+        {user?.role === 'admin' && (
+          <div className="mt-8 pt-6 border-t border-slate-800">
+            <div className="flex items-center gap-2 mb-4">
+              <Wrench className="w-5 h-5 text-terminal-green" />
+              <h2 className="text-base sm:text-lg font-semibold text-slate-300">System Scripts</h2>
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              Quick maintenance scripts for system-level tasks
+            </p>
+            <SystemScripts />
           </div>
-          <p className="text-xs text-slate-500 mb-4">
-            Quick maintenance scripts for system-level tasks
-          </p>
-          <SystemScripts />
-        </div>
+        )}
       </main>
 
       {/* New Project Modal */}
@@ -181,6 +228,14 @@ function HomePage() {
         onClose={() => setIsModalOpen(false)}
         onSubmit={handleCreateProject}
         isLoading={isCreating}
+      />
+
+      {/* Create User Modal - Admin only */}
+      <CreateUserModal
+        isOpen={showCreateUserModal}
+        onClose={() => setShowCreateUserModal(false)}
+        onSubmit={handleCreateUser}
+        isLoading={isCreatingUser}
       />
       {/* Terminal is now rendered at app root via PersistentTerminal */}
     </div>

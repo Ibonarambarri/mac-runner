@@ -32,7 +32,10 @@ import { FileExplorer } from '../components/FileExplorer';
 import { EnvEditor } from '../components/EnvEditor';
 import { TensorBoardWidget } from '../components/TensorBoardWidget';
 import { ScheduleManager } from '../components/ScheduleManager';
+import { UserMenu } from '../components/UserMenu';
+import { CreateUserModal } from '../components/CreateUserModal';
 import { useLogStream } from '../hooks/useLogStream';
+import { useAuth } from '../contexts/AuthContext';
 import {
   getProject,
   getProjectJobs,
@@ -50,6 +53,7 @@ import {
   startJupyter,
   stopJupyter,
   getJupyterStatus,
+  createUser,
 } from '../api';
 
 /**
@@ -110,6 +114,8 @@ function ProjectPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const projectId = parseInt(id, 10);
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
 
   // State
   const [project, setProject] = useState(null);
@@ -136,6 +142,10 @@ function ProjectPage() {
   const [runningNotebook, setRunningNotebook] = useState(false);
   const [showJupyterInstallModal, setShowJupyterInstallModal] = useState(false);
   const [installingJupyter, setInstallingJupyter] = useState(false);
+
+  // Create User Modal state
+  const [showCreateUserModal, setShowCreateUserModal] = useState(false);
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
 
   // Log streaming hook
   const { logs, isConnected, isComplete, error: wsError, clearLogs } = useLogStream(selectedJobId);
@@ -327,6 +337,19 @@ function ProjectPage() {
     }
   };
 
+  // Create user handler
+  const handleCreateUser = async (userData) => {
+    setIsCreatingUser(true);
+    try {
+      await createUser(userData);
+      setShowCreateUserModal(false);
+    } catch (e) {
+      throw e; // Re-throw to let modal display error
+    } finally {
+      setIsCreatingUser(false);
+    }
+  };
+
   // Notebook handlers - run the default notebook directly
   const handleRunDefaultNotebook = async () => {
     if (!project.default_notebook) {
@@ -453,6 +476,9 @@ function ProjectPage() {
               )}
               <span className="text-sm text-slate-400">{status.text}</span>
             </div>
+
+            {/* User Menu */}
+            <UserMenu onCreateUser={() => setShowCreateUserModal(true)} />
           </div>
         </div>
       </header>
@@ -605,16 +631,18 @@ function ProjectPage() {
                   </div>
                 </section>
 
-                {/* Quick Run */}
-                <QuickRun
-                  projectId={projectId}
-                  onJobStarted={(job) => {
-                    setSelectedJobId(job.id);
-                    clearLogs();
-                  }}
-                  onCommandsChange={fetchData}
-                  disabled={isRunning || isCloning}
-                />
+                {/* Quick Run - Admin only */}
+                {isAdmin && (
+                  <QuickRun
+                    projectId={projectId}
+                    onJobStarted={(job) => {
+                      setSelectedJobId(job.id);
+                      clearLogs();
+                    }}
+                    onCommandsChange={fetchData}
+                    disabled={isRunning || isCloning}
+                  />
+                )}
 
                 {/* Command Templates */}
                 <CommandSection
@@ -623,6 +651,7 @@ function ProjectPage() {
                   onRunCommand={handleRunCommand}
                   onCommandsChange={fetchData}
                   disabled={isRunning || isCloning}
+                  isAdmin={isAdmin}
                 />
 
                 {/* Job History */}
@@ -892,6 +921,14 @@ function ProjectPage() {
           </div>
         </div>
       )}
+
+      {/* Create User Modal - Admin only */}
+      <CreateUserModal
+        isOpen={showCreateUserModal}
+        onClose={() => setShowCreateUserModal(false)}
+        onSubmit={handleCreateUser}
+        isLoading={isCreatingUser}
+      />
 
     </div>
   );

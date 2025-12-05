@@ -12,10 +12,13 @@ from pathlib import Path
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Depends, WebSocket, BackgroundTasks, Query
+from fastapi import FastAPI, HTTPException, Depends, WebSocket, BackgroundTasks, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+import bcrypt
 import os as os_module
+import secrets as secrets_module
 from sqlmodel import Session, select
 
 from .database import create_db_and_tables, get_session, engine
@@ -24,7 +27,9 @@ from .models import (
     Job, JobRead, JobStatus, ProjectStatus,
     CommandTemplate, CommandTemplateCreate, CommandTemplateRead, CommandTemplateUpdate,
     FileInfo,
-    ScheduledTask, ScheduledTaskCreate, ScheduledTaskRead, ScheduledTaskUpdate
+    ScheduledTask, ScheduledTaskCreate, ScheduledTaskRead, ScheduledTaskUpdate,
+    User, UserCreate, UserRead, UserRole,
+    AuditLog, AuditLogRead
 )
 from .manager import init_process_manager, get_process_manager
 from .websockets import stream_logs, handle_terminal, handle_status_websocket, broadcast_status_update
@@ -43,6 +48,122 @@ ROOT_ENV_PATH = BASE_PATH / ".env"
 if ROOT_ENV_PATH.exists():
     load_dotenv(ROOT_ENV_PATH)
     print(f"[INFO] Loaded environment from {ROOT_ENV_PATH}")
+
+
+# ============================================================================
+# AUTHENTICATION & SECURITY
+# ============================================================================
+
+# HTTP Basic Auth security scheme
+security = HTTPBasic()
+
+
+def hash_password(password: str) -> str:
+    """Hash a password using bcrypt."""
+    password_bytes = password.encode('utf-8')
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password_bytes, salt).decode('utf-8')
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a password against its hash."""
+    try:
+        password_bytes = plain_password.encode('utf-8')
+        hashed_bytes = hashed_password.encode('utf-8')
+        return bcrypt.checkpw(password_bytes, hashed_bytes)
+    except Exception:
+        return False
+
+
+def get_current_user(
+    credentials: HTTPBasicCredentials = Depends(security),
+    session: Session = Depends(get_session)
+) -> User:
+    """
+    Validate HTTP Basic credentials and return the current user.
+    Raises HTTPException 401 if credentials are invalid.
+    """
+    user = session.get(User, credentials.username)
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    if not verify_password(credentials.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    return user
+
+
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    """
+    Dependency that requires the current user to be an admin.
+    Raises HTTPException 403 if user is not an admin.
+    """
+    if current_user.role != UserRole.admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required"
+        )
+    return current_user
+
+
+def require_worker_or_admin(current_user: User = Depends(get_current_user)) -> User:
+    """
+    Dependency that requires the current user to be a worker or admin.
+    (Both roles have access to basic operations)
+    """
+    # Both worker and admin have access
+    return current_user
+
+
+def log_activity(
+    session: Session,
+    username: str,
+    action: str,
+    target: Optional[str] = None,
+    details: Optional[str] = None
+) -> None:
+    """
+    Log a user activity to the audit log.
+    """
+    audit_entry = AuditLog(
+        username=username,
+        action=action,
+        target=target,
+        details=details
+    )
+    session.add(audit_entry)
+    session.commit()
+
+
+def create_default_admin() -> None:
+    """
+    Create the default admin user if the users table is empty.
+    This ensures there's always a way to access the system.
+    """
+    with Session(engine) as session:
+        # Check if any users exist
+        existing_users = session.exec(select(User)).first()
+
+        if existing_users is None:
+            # Create default admin user
+            default_admin = User(
+                username="admin",
+                hashed_password=hash_password("admin"),
+                role=UserRole.admin
+            )
+            session.add(default_admin)
+            session.commit()
+            print("[INFO] Created default admin user (username: admin, password: admin)")
+            print("[WARN] Please change the default admin password immediately!")
 
 
 def get_accessible_hostname() -> str:
@@ -94,6 +215,7 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     create_db_and_tables()
+    create_default_admin()  # Create default admin user if none exists
     manager = init_process_manager(BASE_PATH)
     print("[INFO] MacRunner initialized")
     print(f"       Workspaces: {BASE_PATH / 'workspaces'}")
@@ -202,15 +324,22 @@ async def create_project(
 
 
 @app.get("/projects/", response_model=List[ProjectRead])
-def list_projects(session: Session = Depends(get_session)):
-    """List all projects."""
+def list_projects(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_worker_or_admin)
+):
+    """List all projects. Requires authentication."""
     projects = session.exec(select(Project)).all()
     return projects
 
 
 @app.get("/projects/{project_id}", response_model=ProjectRead)
-def get_project(project_id: int, session: Session = Depends(get_session)):
-    """Get a specific project by ID."""
+def get_project(
+    project_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_worker_or_admin)
+):
+    """Get a specific project by ID. Requires authentication."""
     project = session.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -347,11 +476,13 @@ async def pull_project(
 async def install_project(
     project_id: int,
     background_tasks: BackgroundTasks,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_worker_or_admin)
 ):
     """
     Run the install/build command for a project.
     Creates a new job and streams logs via WebSocket.
+    Requires authentication (worker or admin).
     """
     project = session.get(Project, project_id)
     if not project:
@@ -376,6 +507,15 @@ async def install_project(
     session.add(job)
     session.commit()
     session.refresh(job)
+
+    # Log the activity
+    log_activity(
+        session,
+        username=current_user.username,
+        action="install",
+        target=project.name,
+        details=f"job_id={job.id}"
+    )
 
     # Run install in background
     async def install_task():
@@ -408,11 +548,13 @@ async def install_project(
 async def run_project(
     project_id: int,
     background_tasks: BackgroundTasks,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_worker_or_admin)
 ):
     """
     Run the main command for a project.
     Creates a new job and streams logs via WebSocket.
+    Requires authentication (worker or admin).
 
     Returns the job_id which can be used to connect to /ws/logs/{job_id}
     """
@@ -439,6 +581,15 @@ async def run_project(
     session.add(job)
     session.commit()
     session.refresh(job)
+
+    # Log the activity
+    log_activity(
+        session,
+        username=current_user.username,
+        action="run",
+        target=project.name,
+        details=f"job_id={job.id}"
+    )
 
     # Run job in background
     async def run_task():
@@ -470,8 +621,12 @@ async def run_project(
 
 
 @app.get("/projects/{project_id}/jobs", response_model=List[JobRead])
-def list_project_jobs(project_id: int, session: Session = Depends(get_session)):
-    """List all jobs for a project."""
+def list_project_jobs(
+    project_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_worker_or_admin)
+):
+    """List all jobs for a project. Requires authentication."""
     project = session.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -484,8 +639,12 @@ def list_project_jobs(project_id: int, session: Session = Depends(get_session)):
 
 
 @app.get("/jobs/{job_id}", response_model=JobRead)
-def get_job(job_id: int, session: Session = Depends(get_session)):
-    """Get a specific job by ID."""
+def get_job(
+    job_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_worker_or_admin)
+):
+    """Get a specific job by ID. Requires authentication."""
     job = session.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -493,9 +652,14 @@ def get_job(job_id: int, session: Session = Depends(get_session)):
 
 
 @app.post("/jobs/{job_id}/stop")
-async def stop_job(job_id: int, session: Session = Depends(get_session)):
+async def stop_job(
+    job_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_worker_or_admin)
+):
     """
     Stop a running job by terminating its process.
+    Requires authentication (worker or admin).
     """
     job = session.get(Job, job_id)
     if not job:
@@ -519,6 +683,15 @@ async def stop_job(job_id: int, session: Session = Depends(get_session)):
             project.status = ProjectStatus.IDLE
             session.add(project)
             session.commit()
+
+            # Log the activity
+            log_activity(
+                session,
+                username=current_user.username,
+                action="stop",
+                target=project.name,
+                details=f"job_id={job_id}"
+            )
 
         return {"status": "stopped", "job_id": job_id}
     else:
@@ -549,8 +722,12 @@ async def delete_job(job_id: int, session: Session = Depends(get_session)):
 # ============================================================================
 
 @app.get("/projects/{project_id}/commands", response_model=List[CommandTemplateRead])
-def list_command_templates(project_id: int, session: Session = Depends(get_session)):
-    """List all command templates for a project."""
+def list_command_templates(
+    project_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_worker_or_admin)
+):
+    """List all command templates for a project. Requires authentication."""
     project = session.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -566,9 +743,10 @@ def list_command_templates(project_id: int, session: Session = Depends(get_sessi
 def create_command_template(
     project_id: int,
     template_data: CommandTemplateCreate,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    admin: User = Depends(require_admin)
 ):
-    """Create a new command template for a project."""
+    """Create a new command template for a project. Admin only."""
     project = session.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -586,9 +764,10 @@ def update_command_template(
     project_id: int,
     command_id: int,
     template_update: CommandTemplateUpdate,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    admin: User = Depends(require_admin)
 ):
-    """Update a command template."""
+    """Update a command template. Admin only."""
     template = session.get(CommandTemplate, command_id)
     if not template or template.project_id != project_id:
         raise HTTPException(status_code=404, detail="Command template not found")
@@ -608,9 +787,10 @@ def update_command_template(
 def delete_command_template(
     project_id: int,
     command_id: int,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    admin: User = Depends(require_admin)
 ):
-    """Delete a command template."""
+    """Delete a command template. Admin only."""
     template = session.get(CommandTemplate, command_id)
     if not template or template.project_id != project_id:
         raise HTTPException(status_code=404, detail="Command template not found")
@@ -626,11 +806,13 @@ async def run_command_template(
     project_id: int,
     command_id: int,
     background_tasks: BackgroundTasks,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_worker_or_admin)
 ):
     """
     Execute a command template.
     Creates a new job and streams logs via WebSocket.
+    Requires authentication (worker or admin).
     """
     project = session.get(Project, project_id)
     if not project:
@@ -660,6 +842,15 @@ async def run_command_template(
     session.commit()
     session.refresh(job)
 
+    # Log the activity
+    log_activity(
+        session,
+        username=current_user.username,
+        action="run_template",
+        target=project.name,
+        details=f"template={template.name}, job_id={job.id}"
+    )
+
     # Run command in background
     async def run_task():
         with Session(engine) as bg_session:
@@ -685,10 +876,12 @@ async def run_one_off_command(
     project_id: int,
     request: OneOffCommandRequest,
     background_tasks: BackgroundTasks,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    admin: User = Depends(require_admin)
 ):
     """
     Execute a one-off command without saving it as a template.
+    Admin only - arbitrary command execution is privileged.
     Creates a new job and streams logs via WebSocket.
     """
     project = session.get(Project, project_id)
@@ -718,6 +911,15 @@ async def run_one_off_command(
     session.add(job)
     session.commit()
     session.refresh(job)
+
+    # Log the activity
+    log_activity(
+        session,
+        username=admin.username,
+        action="run_command",
+        target=project.name,
+        details=f"command={request.command}"
+    )
 
     # Run command in background
     async def run_task():
@@ -1444,7 +1646,7 @@ async def start_jupyter_lab(
         raise HTTPException(status_code=503, detail=str(e))
 
     # Generate a token for authentication
-    token = secrets.token_urlsafe(32)
+    token = secrets_module.token_urlsafe(32)
 
     # Get the venv python path if it exists
     venv_path = workspace / "venv"
@@ -1886,10 +2088,13 @@ def get_tensorboard_status(
 # ============================================================================
 
 @app.post("/terminal/start")
-def start_terminal():
+def start_terminal(
+    admin: User = Depends(require_admin)
+):
     """
     Start a new general terminal session.
     Returns session_id to use with WebSocket.
+    Admin only - interactive terminal is a privileged operation.
     """
     manager = get_process_manager()
     session_id = manager.create_terminal_session()
@@ -2300,9 +2505,12 @@ from .manager import list_system_scripts, run_system_script
 
 
 @app.get("/system-scripts")
-async def get_system_scripts():
+async def get_system_scripts(
+    admin: User = Depends(require_admin)
+):
     """
     List all available system scripts.
+    Admin only.
 
     Returns scripts from the backend/system_scripts folder.
     """
@@ -2311,9 +2519,14 @@ async def get_system_scripts():
 
 
 @app.post("/system-scripts/run/{script_name}")
-async def execute_system_script(script_name: str):
+async def execute_system_script(
+    script_name: str,
+    session: Session = Depends(get_session),
+    admin: User = Depends(require_admin)
+):
     """
     Execute a system script.
+    Admin only.
 
     Args:
         script_name: Name of the script file (e.g., "clean_docker.sh")
@@ -2323,6 +2536,16 @@ async def execute_system_script(script_name: str):
     """
     try:
         return_code, output = await run_system_script(script_name)
+
+        # Log the activity
+        log_activity(
+            session,
+            username=admin.username,
+            action="run_system_script",
+            target=script_name,
+            details=f"exit_code={return_code}"
+        )
+
         return {
             "script_name": script_name,
             "success": return_code == 0,
@@ -2333,6 +2556,205 @@ async def execute_system_script(script_name: str):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error executing script: {str(e)}")
+
+
+# ============================================================================
+# USER MANAGEMENT ENDPOINTS (Admin Only)
+# ============================================================================
+
+class PasswordChangeRequest(BaseModel):
+    """Request body for changing password."""
+    current_password: str
+    new_password: str
+
+
+@app.post("/admin/users/", response_model=UserRead)
+def create_user(
+    user_data: UserCreate,
+    session: Session = Depends(get_session),
+    admin: User = Depends(require_admin)
+):
+    """
+    Create a new user. Admin only.
+    """
+    # Check if username already exists
+    existing_user = session.get(User, user_data.username)
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username already exists")
+
+    # Create the user
+    new_user = User(
+        username=user_data.username,
+        hashed_password=hash_password(user_data.password),
+        role=user_data.role
+    )
+    session.add(new_user)
+    session.commit()
+    session.refresh(new_user)
+
+    # Log the activity
+    log_activity(
+        session,
+        username=admin.username,
+        action="create_user",
+        target=user_data.username,
+        details=f"role={user_data.role.value}"
+    )
+
+    return new_user
+
+
+@app.get("/admin/users/", response_model=List[UserRead])
+def list_users(
+    session: Session = Depends(get_session),
+    admin: User = Depends(require_admin)
+):
+    """
+    List all users. Admin only.
+    """
+    users = session.exec(select(User)).all()
+    return users
+
+
+@app.delete("/admin/users/{username}")
+def delete_user(
+    username: str,
+    session: Session = Depends(get_session),
+    admin: User = Depends(require_admin)
+):
+    """
+    Delete a user. Admin only.
+    Cannot delete yourself.
+    """
+    if username == admin.username:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+
+    user = session.get(User, username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    session.delete(user)
+    session.commit()
+
+    # Log the activity
+    log_activity(
+        session,
+        username=admin.username,
+        action="delete_user",
+        target=username
+    )
+
+    return {"status": "deleted", "username": username}
+
+
+@app.post("/users/me/change-password")
+def change_password(
+    request: PasswordChangeRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Change the current user's password.
+    Requires current password for verification.
+    """
+    # Verify current password
+    if not verify_password(request.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    # Update password
+    current_user.hashed_password = hash_password(request.new_password)
+    session.add(current_user)
+    session.commit()
+
+    # Log the activity
+    log_activity(
+        session,
+        username=current_user.username,
+        action="change_password",
+        target=current_user.username
+    )
+
+    return {"status": "password_changed"}
+
+
+@app.get("/users/me", response_model=UserRead)
+def get_current_user_info(
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get the current authenticated user's info.
+    """
+    return current_user
+
+
+# ============================================================================
+# LOGIN ENDPOINT
+# ============================================================================
+
+@app.post("/auth/login", response_model=UserRead)
+def login(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Login endpoint - validates credentials and returns user info.
+    Use HTTP Basic Auth header: Authorization: Basic base64(username:password)
+
+    Returns user info if credentials are valid, 401 if invalid.
+    """
+    # Log the login activity
+    log_activity(
+        session,
+        username=current_user.username,
+        action="login",
+        target=current_user.username
+    )
+    return current_user
+
+
+@app.get("/auth/check")
+def check_auth(
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Quick auth check endpoint - returns 200 if authenticated, 401 if not.
+    Useful for frontend to verify stored credentials are still valid.
+    """
+    return {
+        "authenticated": True,
+        "username": current_user.username,
+        "role": current_user.role.value
+    }
+
+
+# ============================================================================
+# AUDIT LOG ENDPOINTS (Admin Only)
+# ============================================================================
+
+@app.get("/admin/audit-logs", response_model=List[AuditLogRead])
+def get_audit_logs(
+    limit: int = Query(default=100, le=1000),
+    offset: int = Query(default=0, ge=0),
+    username: Optional[str] = None,
+    action: Optional[str] = None,
+    session: Session = Depends(get_session),
+    admin: User = Depends(require_admin)
+):
+    """
+    Get audit logs. Admin only.
+    Supports filtering by username and action, with pagination.
+    """
+    statement = select(AuditLog).order_by(AuditLog.timestamp.desc())
+
+    if username:
+        statement = statement.where(AuditLog.username == username)
+    if action:
+        statement = statement.where(AuditLog.action == action)
+
+    statement = statement.offset(offset).limit(limit)
+    logs = session.exec(statement).all()
+
+    return logs
 
 
 @app.get("/health")

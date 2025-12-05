@@ -17,6 +17,7 @@ export function CommandSection({
   onRunCommand,
   onCommandsChange,
   disabled,
+  isAdmin = false,
 }) {
   const [isCreating, setIsCreating] = useState(false);
   const [newCommand, setNewCommand] = useState('');
@@ -105,7 +106,7 @@ export function CommandSection({
           <Terminal className="w-4 h-4" />
           Command Templates
         </h2>
-        {!isCreating && (
+        {!isCreating && isAdmin && (
           <button
             onClick={() => setIsCreating(true)}
             disabled={disabled}
@@ -211,22 +212,26 @@ export function CommandSection({
                     >
                       <Play className="w-4 h-4" />
                     </button>
-                    <button
-                      onClick={() => handleStartEdit(cmd)}
-                      disabled={disabled}
-                      className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
-                      title="Edit command"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(cmd.id, cmd.command)}
-                      disabled={disabled}
-                      className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
-                      title="Delete command"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {isAdmin && (
+                      <>
+                        <button
+                          onClick={() => handleStartEdit(cmd)}
+                          disabled={disabled}
+                          className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                          title="Edit command"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(cmd.id, cmd.command)}
+                          disabled={disabled}
+                          className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                          title="Delete command"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </>
               )}
