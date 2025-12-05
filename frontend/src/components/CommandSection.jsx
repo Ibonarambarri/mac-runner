@@ -186,49 +186,49 @@ export function CommandSection({
                   <button
                     onClick={() => handleSaveEdit(cmd.id)}
                     disabled={saving || !editValue.trim()}
-                    className="p-1.5 text-terminal-green hover:bg-terminal-green/20 rounded transition-colors disabled:opacity-50"
+                    className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-terminal-green hover:bg-terminal-green/20 active:bg-terminal-green/30 rounded transition-colors disabled:opacity-50 touch-manipulation"
                     title="Save"
                   >
-                    <Check className="w-4 h-4" />
+                    <Check className="w-5 h-5" />
                   </button>
                   <button
                     onClick={handleCancelEdit}
-                    className="p-1.5 text-slate-400 hover:bg-slate-700 rounded transition-colors"
+                    className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-400 hover:bg-slate-700 active:bg-slate-600 rounded transition-colors touch-manipulation"
                     title="Cancel"
                   >
-                    <X className="w-4 h-4" />
+                    <X className="w-5 h-5" />
                   </button>
                 </>
               ) : (
                 /* Display mode */
                 <>
                   <code className="flex-1 text-sm text-slate-300 font-mono truncate">{cmd.command}</code>
-                  <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
                     <button
                       onClick={() => onRunCommand(cmd.id)}
                       disabled={disabled}
-                      className="p-2 text-terminal-green hover:bg-terminal-green/20 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                      className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-terminal-green hover:bg-terminal-green/20 active:bg-terminal-green/30 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
                       title="Run command"
                     >
-                      <Play className="w-4 h-4" />
+                      <Play className="w-5 h-5" />
                     </button>
                     {isAdmin && (
                       <>
                         <button
                           onClick={() => handleStartEdit(cmd)}
                           disabled={disabled}
-                          className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                          className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-400 hover:text-slate-200 hover:bg-slate-700 active:bg-slate-600 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
                           title="Edit command"
                         >
-                          <Pencil className="w-4 h-4" />
+                          <Pencil className="w-5 h-5" />
                         </button>
                         <button
                           onClick={() => handleDelete(cmd.id, cmd.command)}
                           disabled={disabled}
-                          className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                          className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-400 hover:text-red-400 hover:bg-red-500/10 active:bg-red-500/20 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
                           title="Delete command"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-5 h-5" />
                         </button>
                       </>
                     )}

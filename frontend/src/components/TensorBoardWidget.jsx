@@ -91,10 +91,10 @@ export function TensorBoardWidget({ projectId }) {
         </div>
         <button
           onClick={fetchData}
-          className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors"
+          className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-400 hover:text-slate-200 hover:bg-slate-800 active:bg-slate-700 rounded transition-colors touch-manipulation"
           title="Refresh"
         >
-          <RefreshCw className="w-3.5 h-3.5" />
+          <RefreshCw className="w-4 h-4" />
         </button>
       </div>
 
@@ -130,16 +130,16 @@ export function TensorBoardWidget({ projectId }) {
                       href={runningInfo.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500/20 text-orange-400 rounded text-xs hover:bg-orange-500/30 transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-2.5 min-h-[44px] bg-orange-500/20 text-orange-400 rounded text-xs hover:bg-orange-500/30 active:bg-orange-500/40 transition-colors touch-manipulation"
                     >
-                      <ExternalLink className="w-3.5 h-3.5" />
+                      <ExternalLink className="w-4 h-4" />
                       Open
                     </a>
                     <button
                       onClick={() => handleStop(dir.path)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/20 text-red-400 rounded text-xs hover:bg-red-500/30 transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-2.5 min-h-[44px] bg-red-500/20 text-red-400 rounded text-xs hover:bg-red-500/30 active:bg-red-500/40 transition-colors touch-manipulation"
                     >
-                      <Square className="w-3.5 h-3.5" />
+                      <Square className="w-4 h-4" />
                       Stop
                     </button>
                   </>
@@ -147,12 +147,12 @@ export function TensorBoardWidget({ projectId }) {
                   <button
                     onClick={() => handleStart(dir.path)}
                     disabled={isStarting}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-terminal-green/20 text-terminal-green rounded text-xs hover:bg-terminal-green/30 transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-2.5 min-h-[44px] bg-terminal-green/20 text-terminal-green rounded text-xs hover:bg-terminal-green/30 active:bg-terminal-green/40 transition-colors disabled:opacity-50 touch-manipulation"
                   >
                     {isStarting ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
-                      <Play className="w-3.5 h-3.5" />
+                      <Play className="w-4 h-4" />
                     )}
                     Launch
                   </button>
@@ -182,16 +182,16 @@ export function TensorBoardWidget({ projectId }) {
                   href={r.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500/20 text-orange-400 rounded text-xs hover:bg-orange-500/30 transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-2.5 min-h-[44px] bg-orange-500/20 text-orange-400 rounded text-xs hover:bg-orange-500/30 active:bg-orange-500/40 transition-colors touch-manipulation"
                 >
-                  <ExternalLink className="w-3.5 h-3.5" />
+                  <ExternalLink className="w-4 h-4" />
                   Open
                 </a>
                 <button
                   onClick={() => handleStop(r.log_dir)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/20 text-red-400 rounded text-xs hover:bg-red-500/30 transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-2.5 min-h-[44px] bg-red-500/20 text-red-400 rounded text-xs hover:bg-red-500/30 active:bg-red-500/40 transition-colors touch-manipulation"
                 >
-                  <Square className="w-3.5 h-3.5" />
+                  <Square className="w-4 h-4" />
                   Stop
                 </button>
               </div>

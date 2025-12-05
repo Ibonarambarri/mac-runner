@@ -338,9 +338,9 @@ export function FileExplorer({ projectId, fullWidth = false, isMobile = false })
             <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900 flex-shrink-0">
               <button
                 onClick={closePreview}
-                className="p-2 -ml-2 text-slate-400 active:text-slate-200 active:bg-slate-800 rounded-lg transition-colors touch-manipulation"
+                className="p-2.5 min-w-[44px] min-h-[44px] -ml-2 flex items-center justify-center text-slate-400 active:text-slate-200 active:bg-slate-800 rounded-lg transition-colors touch-manipulation"
               >
-                <ArrowLeft className="w-5 h-5" />
+                <ArrowLeft className="w-6 h-6" />
               </button>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-slate-200 truncate">{previewFile.name}</p>
@@ -351,7 +351,7 @@ export function FileExplorer({ projectId, fullWidth = false, isMobile = false })
                 {previewContent?.type === 'text' && isEditable(previewFile.extension) && !isEditing && (
                   <button
                     onClick={enterEditMode}
-                    className="p-2.5 text-blue-400 active:bg-blue-500/20 rounded-lg transition-colors touch-manipulation"
+                    className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-blue-400 active:bg-blue-500/20 rounded-lg transition-colors touch-manipulation"
                   >
                     <Edit3 className="w-5 h-5" />
                   </button>
@@ -361,7 +361,7 @@ export function FileExplorer({ projectId, fullWidth = false, isMobile = false })
                     <button
                       onClick={handleSave}
                       disabled={isSaving || !hasUnsavedChanges}
-                      className={`p-2.5 rounded-lg transition-colors touch-manipulation ${
+                      className={`p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors touch-manipulation ${
                         hasUnsavedChanges ? 'text-terminal-green active:bg-terminal-green/20' : 'text-slate-600'
                       }`}
                     >
@@ -369,7 +369,7 @@ export function FileExplorer({ projectId, fullWidth = false, isMobile = false })
                     </button>
                     <button
                       onClick={cancelEdit}
-                      className="p-2.5 text-slate-400 active:bg-slate-800 rounded-lg transition-colors touch-manipulation"
+                      className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-400 active:bg-slate-800 rounded-lg transition-colors touch-manipulation"
                     >
                       <X className="w-5 h-5" />
                     </button>
@@ -377,7 +377,7 @@ export function FileExplorer({ projectId, fullWidth = false, isMobile = false })
                 )}
                 <a
                   href={getFileDownloadUrl(projectId, previewFile.path)}
-                  className="p-2.5 text-terminal-green active:bg-terminal-green/20 rounded-lg transition-colors touch-manipulation"
+                  className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-terminal-green active:bg-terminal-green/20 rounded-lg transition-colors touch-manipulation"
                 >
                   <Download className="w-5 h-5" />
                 </a>
@@ -444,24 +444,24 @@ export function FileExplorer({ projectId, fullWidth = false, isMobile = false })
         )}
 
         {/* Mobile: File list header */}
-        <div className="border-b border-slate-800 p-3 flex-shrink-0">
-          <div className="flex items-center gap-2">
+        <div className="border-b border-slate-800 p-2 flex-shrink-0">
+          <div className="flex items-center gap-1">
             {currentPath && (
               <button
                 onClick={goBack}
-                className="p-2 -ml-2 text-slate-400 active:text-slate-200 active:bg-slate-800 rounded-lg transition-colors touch-manipulation"
+                className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-400 active:text-slate-200 active:bg-slate-800 rounded-lg transition-colors touch-manipulation"
               >
                 <ArrowLeft className="w-5 h-5" />
               </button>
             )}
             <button
               onClick={() => navigateTo('')}
-              className={`p-2 text-slate-400 active:text-slate-200 active:bg-slate-800 rounded-lg transition-colors touch-manipulation ${!currentPath ? '-ml-2' : ''}`}
+              className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-400 active:text-slate-200 active:bg-slate-800 rounded-lg transition-colors touch-manipulation"
             >
               <Home className="w-5 h-5" />
             </button>
             {currentPath && (
-              <span className="text-sm text-slate-300 truncate flex-1">
+              <span className="text-sm text-slate-300 truncate flex-1 ml-2">
                 {currentPath.split('/').pop() || 'Root'}
               </span>
             )}
@@ -486,7 +486,7 @@ export function FileExplorer({ projectId, fullWidth = false, isMobile = false })
                   <button
                     key={file.path}
                     onClick={() => handleFileClick(file)}
-                    className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-slate-800 transition-colors touch-manipulation"
+                    className="w-full flex items-center gap-3 px-4 min-h-[52px] text-left active:bg-slate-800 transition-colors touch-manipulation"
                   >
                     <FileIcon className={`w-5 h-5 flex-shrink-0 ${
                       file.is_directory ? 'text-yellow-400' : 'text-slate-400'
@@ -500,7 +500,7 @@ export function FileExplorer({ projectId, fullWidth = false, isMobile = false })
                       </span>
                     )}
                     {file.is_directory && (
-                      <ChevronRight className="w-4 h-4 text-slate-500 flex-shrink-0" />
+                      <ChevronRight className="w-5 h-5 text-slate-500 flex-shrink-0" />
                     )}
                   </button>
                 );
@@ -989,10 +989,10 @@ export function FileExplorer({ projectId, fullWidth = false, isMobile = false })
                             <a
                               href={getFileDownloadUrl(projectId, file.path)}
                               onClick={(e) => e.stopPropagation()}
-                              className="p-2 text-slate-500 hover:text-slate-200 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity touch-manipulation"
+                              className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-500 hover:text-slate-200 active:text-white opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity touch-manipulation"
                               title="Download"
                             >
-                              <Download className="w-3.5 h-3.5" />
+                              <Download className="w-4 h-4" />
                             </a>
                           )}
                         </>

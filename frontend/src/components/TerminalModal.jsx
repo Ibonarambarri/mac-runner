@@ -314,7 +314,7 @@ export function TerminalModal({ isOpen, onClose }) {
             </div>
             <button
               onClick={handleClose}
-              className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors touch-manipulation"
+              className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-400 hover:text-slate-200 hover:bg-slate-800 active:bg-slate-700 rounded-lg transition-colors touch-manipulation"
               title="Close (Ctrl+Shift+Esc)"
             >
               <X className="w-5 h-5" />
