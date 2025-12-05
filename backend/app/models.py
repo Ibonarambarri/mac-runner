@@ -33,6 +33,7 @@ class EnvironmentType(str, Enum):
     # Using lowercase names to match frontend values and database storage
     venv = "venv"
     conda = "conda"
+    docker = "docker"
 
 
 class JobStatus(str, Enum):

@@ -31,7 +31,7 @@ from .models import (
     User, UserCreate, UserRead, UserRole,
     AuditLog, AuditLogRead
 )
-from .manager import init_process_manager, get_process_manager
+from .manager import init_process_manager, get_process_manager, safe_kill_process_group
 from .websockets import stream_logs, handle_terminal, handle_status_websocket, broadcast_status_update
 from .scheduler import (
     init_scheduler, start_scheduler, shutdown_scheduler,
@@ -206,6 +206,23 @@ def get_accessible_hostname() -> str:
     return socket.gethostname()
 
 
+# Background task for PTY session cleanup
+_cleanup_task: Optional[asyncio.Task] = None
+
+
+async def _periodic_pty_cleanup():
+    """Periodically clean up inactive PTY sessions to prevent memory leaks."""
+    while True:
+        try:
+            await asyncio.sleep(300)  # Check every 5 minutes
+            manager = get_process_manager()
+            cleaned = manager.cleanup_inactive_sessions()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[WARN] PTY cleanup error: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -213,6 +230,8 @@ async def lifespan(app: FastAPI):
     Initializes database and process manager on startup.
     Restores persisted Jupyter/TensorBoard processes.
     """
+    global _cleanup_task
+
     # Startup
     create_db_and_tables()
     create_default_admin()  # Create default admin user if none exists
@@ -230,7 +249,19 @@ async def lifespan(app: FastAPI):
     start_scheduler()
     print("[INFO] Task scheduler started")
 
+    # Start PTY cleanup background task
+    _cleanup_task = asyncio.create_task(_periodic_pty_cleanup())
+    print("[INFO] PTY session cleanup task started (runs every 5 minutes)")
+
     yield
+
+    # Cancel PTY cleanup task
+    if _cleanup_task:
+        _cleanup_task.cancel()
+        try:
+            await _cleanup_task
+        except asyncio.CancelledError:
+            pass
 
     # Shutdown scheduler
     shutdown_scheduler()
@@ -245,9 +276,8 @@ async def lifespan(app: FastAPI):
         try:
             pid = proc_info.get("pid") or (proc_info.get("process").pid if proc_info.get("process") else None)
             if pid and is_process_alive(pid):
-                import os
                 import signal
-                os.killpg(os.getpgid(pid), signal.SIGTERM)
+                safe_kill_process_group(pid, signal.SIGTERM)
                 print(f"[INFO] Stopped Jupyter for project {project_id}")
         except Exception as e:
             print(f"[WARN] Could not stop Jupyter for project {project_id}: {e}")
@@ -1108,6 +1138,46 @@ def get_file_content(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+from pydantic import BaseModel
+
+
+class FileContentUpdate(BaseModel):
+    content: str
+
+
+@app.put("/projects/{project_id}/files/content")
+def save_file_content(
+    project_id: int,
+    path: str,
+    data: FileContentUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_worker_or_admin)
+):
+    """
+    Save content to a text file.
+
+    Args:
+        project_id: Project ID
+        path: Relative path within workspace
+        data: File content to save
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.workspace_path:
+        raise HTTPException(status_code=400, detail="Project workspace not ready")
+
+    manager = get_process_manager()
+    try:
+        manager.save_file_content(project_id, path, data.content)
+        return {"status": "saved", "path": path}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except IOError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+
+
 @app.get("/projects/{project_id}/files/download")
 def download_file(
     project_id: int,
@@ -1737,7 +1807,6 @@ async def stop_jupyter_lab(
         return {"status": "not_running"}
 
     proc_info = jupyter_processes[project_id]
-    import os
     import signal
 
     # Handle restored processes (no subprocess.Popen object)
@@ -1745,13 +1814,13 @@ async def stop_jupyter_lab(
         pid = proc_info.get("pid")
         if pid and is_process_alive(pid):
             try:
-                os.killpg(os.getpgid(pid), signal.SIGTERM)
+                safe_kill_process_group(pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
     else:
         proc = proc_info["process"]
         if proc.poll() is None:  # Still running
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            safe_kill_process_group(proc.pid, signal.SIGTERM)
 
     del jupyter_processes[project_id]
     remove_jupyter_pid(project_id)

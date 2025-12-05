@@ -3,11 +3,18 @@
  * REST API functions for communicating with the FastAPI backend.
  */
 
-// Dynamically determine API base URL based on current host
-// This allows the app to work both locally and via Tailscale/remote access
+// Dynamically determine API base URL
+// Priority: 1. VITE_API_URL env var, 2. Same host with port 8000
 const getApiBase = () => {
+  // Check for explicit API URL from environment
+  const envApiUrl = import.meta.env.VITE_API_URL;
+  if (envApiUrl) {
+    return envApiUrl;
+  }
+
+  // Default: use same host with port 8000
+  // This allows the app to work both locally and via Tailscale/remote access
   const { protocol, hostname } = window.location;
-  // In production or when accessing remotely, use port 8000 on the same host
   return `${protocol}//${hostname}:8000`;
 };
 
@@ -285,6 +292,16 @@ export async function getFileContent(projectId, path) {
     throw new Error(error.detail || `HTTP ${response.status}`);
   }
   return response.text();
+}
+
+/**
+ * Save file content
+ */
+export async function saveFileContent(projectId, path, content) {
+  return apiFetch(`/projects/${projectId}/files/content?path=${encodeURIComponent(path)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
+  });
 }
 
 /**

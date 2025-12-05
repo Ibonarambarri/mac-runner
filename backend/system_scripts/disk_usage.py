@@ -2,6 +2,7 @@
 """Show disk usage summary for common development directories."""
 
 import os
+import platform
 import shutil
 from pathlib import Path
 
@@ -39,18 +40,34 @@ def main():
     print(f"   Used:  {format_size(used)} ({100 * used / total:.1f}%)")
     print(f"   Free:  {format_size(free)} ({100 * free / total:.1f}%)")
 
-    # Common development directories
+    # Common development directories (cross-platform)
+    is_macos = platform.system() == "Darwin"
+
+    # Base directories that work on both platforms
     dev_dirs = [
-        ("~/Library/Caches", "macOS Caches"),
-        ("~/Library/Developer", "Xcode/Developer"),
         ("~/.cache", "User Cache"),
         ("~/.npm", "npm Cache"),
         ("~/.conda", "Conda Envs"),
-        ("~/miniforge3", "Miniforge"),
         ("~/.local/share/pip", "pip Cache"),
-        ("~/Library/Application Support/Docker", "Docker"),
         ("~/.vscode", "VS Code"),
     ]
+
+    # Add macOS-specific directories
+    if is_macos:
+        dev_dirs.extend([
+            ("~/Library/Caches", "macOS Caches"),
+            ("~/Library/Developer", "Xcode/Developer"),
+            ("~/miniforge3", "Miniforge"),
+            ("~/Library/Application Support/Docker", "Docker"),
+        ])
+    else:
+        # Linux-specific directories
+        dev_dirs.extend([
+            ("~/.local/share", "Local Share"),
+            ("~/.config", "Config"),
+            ("~/snap", "Snap Packages"),
+            ("~/.docker", "Docker"),
+        ])
 
     print(f"\n📂 Development Directories:")
     results = []

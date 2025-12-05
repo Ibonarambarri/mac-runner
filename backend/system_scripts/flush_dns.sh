@@ -1,6 +1,15 @@
 #!/bin/bash
 # Flush DNS cache (macOS)
 
+# Check if running on macOS
+if [[ "$(uname)" != "Darwin" ]]; then
+    echo "❌ Error: This script is only available on macOS"
+    echo "   Detected OS: $(uname)"
+    echo ""
+    echo "For Linux, try: sudo systemd-resolve --flush-caches"
+    exit 1
+fi
+
 echo "🌐 DNS Cache Flush Script"
 echo "========================="
 

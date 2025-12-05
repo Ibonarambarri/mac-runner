@@ -1,6 +1,13 @@
 #!/bin/bash
 # Restart WiFi connection (macOS only)
 
+# Check if running on macOS
+if [[ "$(uname)" != "Darwin" ]]; then
+    echo "❌ Error: This script is only available on macOS"
+    echo "   Detected OS: $(uname)"
+    exit 1
+fi
+
 echo "📶 WiFi Restart Script"
 echo "======================"
 

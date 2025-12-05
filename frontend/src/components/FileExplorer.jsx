@@ -16,8 +16,14 @@ import {
   Square,
   Eye,
   X,
+  Edit3,
+  Save,
+  RotateCcw,
+  Code,
+  BookOpen,
 } from 'lucide-react';
-import { listFiles, getFileDownloadUrl, getFolderZipUrl, getBatchDownloadUrl, getFileContent, renderNotebook } from '../api';
+import { listFiles, getFileDownloadUrl, getFolderZipUrl, getBatchDownloadUrl, getFileContent, saveFileContent, renderNotebook } from '../api';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 /**
  * Get icon component based on file extension
@@ -72,6 +78,26 @@ function isImage(extension) {
 }
 
 /**
+ * Check if file is editable (text-based)
+ */
+function isEditable(extension) {
+  const editableExtensions = [
+    // Code
+    'txt', 'md', 'json', 'yml', 'yaml', 'xml', 'html', 'css', 'scss',
+    'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'go', 'rs', 'rb', 'php',
+    'sh', 'bash', 'zsh', 'conf', 'cfg', 'ini', 'toml', 'env', 'gitignore', 'dockerfile',
+  ];
+  return editableExtensions.includes(extension?.toLowerCase());
+}
+
+/**
+ * Check if file is a markdown file
+ */
+function isMarkdown(extension) {
+  return extension?.toLowerCase() === 'md' || extension?.toLowerCase() === 'markdown';
+}
+
+/**
  * FileExplorer Component
  *
  * VS Code-style file browser with split pane.
@@ -93,6 +119,17 @@ export function FileExplorer({ projectId, fullWidth = false }) {
   const [previewContent, setPreviewContent] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState(null);
+
+  // Edit mode state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState('');
+  const [originalContent, setOriginalContent] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+
+  // Markdown view mode (rendered vs source)
+  const [showMarkdownSource, setShowMarkdownSource] = useState(false);
 
   // Fetch files for current path
   const fetchFiles = useCallback(async () => {
@@ -172,6 +209,7 @@ export function FileExplorer({ projectId, fullWidth = false }) {
     setPreviewLoading(true);
     setPreviewError(null);
     setPreviewContent(null);
+    setShowMarkdownSource(false); // Reset markdown view mode for new files
 
     try {
       if (file.extension === 'ipynb') {
@@ -197,9 +235,80 @@ export function FileExplorer({ projectId, fullWidth = false }) {
 
   // Close preview
   const closePreview = () => {
+    if (hasUnsavedChanges) {
+      if (!confirm('You have unsaved changes. Are you sure you want to close?')) {
+        return;
+      }
+    }
     setPreviewFile(null);
     setPreviewContent(null);
     setPreviewError(null);
+    setIsEditing(false);
+    setEditContent('');
+    setOriginalContent('');
+    setHasUnsavedChanges(false);
+    setSaveError(null);
+    setShowMarkdownSource(false);
+  };
+
+  // Enter edit mode
+  const enterEditMode = () => {
+    if (previewContent?.type === 'text') {
+      setEditContent(previewContent.content);
+      setOriginalContent(previewContent.content);
+      setIsEditing(true);
+      setHasUnsavedChanges(false);
+      setSaveError(null);
+    }
+  };
+
+  // Cancel edit mode
+  const cancelEdit = () => {
+    if (hasUnsavedChanges) {
+      if (!confirm('Discard unsaved changes?')) {
+        return;
+      }
+    }
+    setIsEditing(false);
+    setEditContent('');
+    setHasUnsavedChanges(false);
+    setSaveError(null);
+  };
+
+  // Handle content change
+  const handleContentChange = (e) => {
+    const newContent = e.target.value;
+    setEditContent(newContent);
+    setHasUnsavedChanges(newContent !== originalContent);
+    setSaveError(null);
+  };
+
+  // Save file
+  const handleSave = async () => {
+    if (!previewFile || !hasUnsavedChanges) return;
+
+    setIsSaving(true);
+    setSaveError(null);
+
+    try {
+      await saveFileContent(projectId, previewFile.path, editContent);
+      setOriginalContent(editContent);
+      setHasUnsavedChanges(false);
+      // Update preview content
+      setPreviewContent({ ...previewContent, content: editContent });
+    } catch (e) {
+      setSaveError(e.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Revert changes
+  const handleRevert = () => {
+    if (!confirm('Revert all changes?')) return;
+    setEditContent(originalContent);
+    setHasUnsavedChanges(false);
+    setSaveError(null);
   };
 
   // Build breadcrumb parts
@@ -371,11 +480,88 @@ export function FileExplorer({ projectId, fullWidth = false }) {
                 {/* Preview Header */}
                 <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 flex-shrink-0">
                   <div className="flex items-center gap-2 min-w-0">
-                    <Eye className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    {isEditing ? (
+                      <Edit3 className="w-4 h-4 text-terminal-green flex-shrink-0" />
+                    ) : (
+                      <Eye className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    )}
                     <span className="text-sm text-slate-200 truncate">{previewFile.name}</span>
                     <span className="text-xs text-slate-500">({formatSize(previewFile.size)})</span>
+                    {hasUnsavedChanges && (
+                      <span className="text-xs text-yellow-400">• Modified</span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
+                    {/* Markdown view toggle (rendered vs source) */}
+                    {previewContent?.type === 'text' && isMarkdown(previewFile.extension) && !isEditing && (
+                      <button
+                        onClick={() => setShowMarkdownSource(!showMarkdownSource)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded transition-colors ${
+                          showMarkdownSource
+                            ? 'bg-purple-500/20 text-purple-400'
+                            : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                        }`}
+                        title={showMarkdownSource ? 'Show rendered' : 'Show source'}
+                      >
+                        {showMarkdownSource ? (
+                          <>
+                            <BookOpen className="w-3.5 h-3.5" />
+                            Rendered
+                          </>
+                        ) : (
+                          <>
+                            <Code className="w-3.5 h-3.5" />
+                            Source
+                          </>
+                        )}
+                      </button>
+                    )}
+                    {/* Edit/Save buttons for editable text files */}
+                    {previewContent?.type === 'text' && isEditable(previewFile.extension) && (
+                      isEditing ? (
+                        <>
+                          <button
+                            onClick={handleSave}
+                            disabled={isSaving || !hasUnsavedChanges}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded transition-colors ${
+                              hasUnsavedChanges
+                                ? 'bg-terminal-green text-slate-950 hover:bg-terminal-green/90'
+                                : 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                            }`}
+                          >
+                            {isSaving ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Save className="w-3.5 h-3.5" />
+                            )}
+                            Save
+                          </button>
+                          {hasUnsavedChanges && (
+                            <button
+                              onClick={handleRevert}
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 transition-colors"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              Revert
+                            </button>
+                          )}
+                          <button
+                            onClick={cancelEdit}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={enterEditMode}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-500/20 text-blue-400 rounded hover:bg-blue-500/30 transition-colors"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          Edit
+                        </button>
+                      )
+                    )}
                     <a
                       href={getFileDownloadUrl(projectId, previewFile.path)}
                       className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-terminal-green/20 text-terminal-green rounded hover:bg-terminal-green/30 transition-colors"
@@ -417,9 +603,31 @@ export function FileExplorer({ projectId, fullWidth = false }) {
                       />
                     </div>
                   ) : previewContent?.type === 'text' ? (
-                    <pre className="p-4 text-sm text-slate-200 font-mono whitespace-pre-wrap break-all overflow-x-auto">
-                      {previewContent.content}
-                    </pre>
+                    isEditing ? (
+                      <div className="h-full flex flex-col">
+                        {saveError && (
+                          <div className="px-4 py-2 bg-red-500/20 text-red-400 text-sm border-b border-red-500/30">
+                            Error saving: {saveError}
+                          </div>
+                        )}
+                        <textarea
+                          value={editContent}
+                          onChange={handleContentChange}
+                          className="flex-1 w-full p-4 text-sm text-slate-200 font-mono bg-slate-900 resize-none focus:outline-none focus:ring-1 focus:ring-terminal-green/50"
+                          spellCheck={false}
+                          placeholder="File content..."
+                        />
+                      </div>
+                    ) : isMarkdown(previewFile.extension) && !showMarkdownSource ? (
+                      // Render Markdown files with styling
+                      <div className="p-6 overflow-auto">
+                        <MarkdownRenderer content={previewContent.content} />
+                      </div>
+                    ) : (
+                      <pre className="p-4 text-sm text-slate-200 font-mono whitespace-pre-wrap break-all overflow-x-auto">
+                        {previewContent.content}
+                      </pre>
+                    )
                   ) : previewContent?.type === 'binary' ? (
                     <div className="flex flex-col items-center justify-center h-full p-4 gap-4">
                       <File className="w-12 h-12 text-slate-500" />

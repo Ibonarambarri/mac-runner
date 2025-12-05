@@ -8,6 +8,7 @@ CRITICAL: Uses PYTHONUNBUFFERED=1 to ensure real-time log streaming.
 import asyncio
 import fcntl
 import os
+import platform
 import pty
 import re
 import signal
@@ -21,6 +22,83 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, AsyncGenerator, List
 from collections import defaultdict
+
+# Check if we're on a POSIX system (os.killpg is POSIX-only)
+IS_POSIX = platform.system() != "Windows"
+
+# Dangerous command patterns that require confirmation
+DANGEROUS_COMMAND_PATTERNS = [
+    # Recursive deletion patterns
+    (r'\brm\s+.*-[rR].*\s+(/|~|\$HOME)', "Recursive deletion of root or home directory"),
+    (r'\brm\s+-[rR]f\s+/', "Force recursive deletion from root"),
+    (r'\brm\s+-rf\s+\*', "Force recursive deletion with wildcard"),
+    # Format/wipe commands
+    (r'\bmkfs\.', "Filesystem format command"),
+    (r'\bdd\s+.*of=/dev/', "Direct disk write"),
+    # Dangerous system modifications
+    (r'\bchmod\s+-R\s+777\s+/', "Recursive permission change on root"),
+    (r'\bchown\s+-R\s+.*\s+/', "Recursive ownership change on root"),
+    # Fork bomb patterns
+    (r':\(\)\{\s*:\|:&\s*\};:', "Fork bomb detected"),
+    # wget/curl to shell execution
+    (r'(curl|wget).*\|\s*(ba)?sh', "Remote script execution"),
+    # Environment destruction
+    (r'\bsudo\s+rm\s+-rf\s+/', "Sudo recursive deletion from root"),
+]
+
+
+def validate_command_safety(command: str) -> tuple[bool, str]:
+    """
+    Check if a command contains potentially dangerous patterns.
+
+    This is a basic sanity check to prevent obvious mistakes like
+    'rm -rf /' or fork bombs. It's NOT a security boundary - users
+    can still do harmful things if they really want to.
+
+    Args:
+        command: The command string to validate
+
+    Returns:
+        Tuple of (is_safe, error_message)
+        is_safe is True if command passes basic safety checks
+    """
+    for pattern, description in DANGEROUS_COMMAND_PATTERNS:
+        if re.search(pattern, command, re.IGNORECASE):
+            return False, f"Potentially dangerous command blocked: {description}"
+    return True, ""
+
+
+def safe_kill_process_group(pid: int, sig: signal.Signals) -> bool:
+    """
+    Safely kill a process group on POSIX systems, or fall back to killing
+    just the process on Windows.
+
+    Args:
+        pid: Process ID
+        sig: Signal to send (e.g., signal.SIGTERM, signal.SIGKILL)
+
+    Returns:
+        True if signal was sent, False otherwise
+
+    Raises:
+        ProcessLookupError: If process doesn't exist
+    """
+    if IS_POSIX:
+        try:
+            pgid = os.getpgid(pid)
+            os.killpg(pgid, sig)
+            return True
+        except ProcessLookupError:
+            raise
+        except PermissionError:
+            # Fall back to killing just the main process
+            os.kill(pid, sig)
+            return True
+    else:
+        # Windows: kill just the process (no process groups)
+        os.kill(pid, sig)
+        return True
+
 
 from sqlmodel import Session
 
@@ -147,6 +225,9 @@ class PTYSession:
     like vim, htop, etc.
     """
 
+    # Inactivity timeout in seconds (1 hour)
+    INACTIVITY_TIMEOUT = 3600
+
     def __init__(self, session_id: int):
         self.session_id = session_id
         self.master_fd: Optional[int] = None
@@ -155,6 +236,9 @@ class PTYSession:
         self.closed = False
         self._output_queues: List[asyncio.Queue] = []
         self._reader_task: Optional[asyncio.Task] = None
+        # Track last activity for cleanup of zombie sessions
+        self.last_activity: datetime = datetime.now(timezone.utc)
+        self.created_at: datetime = datetime.now(timezone.utc)
 
     def _detect_shell(self) -> str:
         """Detect available shell, preferring zsh on macOS."""
@@ -272,6 +356,8 @@ class PTYSession:
 
         try:
             os.write(self.master_fd, data)
+            # Update activity timestamp
+            self.last_activity = datetime.now(timezone.utc)
             return True
         except Exception as e:
             print(f"PTY write error: {e}")
@@ -369,6 +455,16 @@ class PTYSession:
             self.closed = True
             return False
 
+    def is_inactive(self) -> bool:
+        """Check if session has been inactive for longer than timeout."""
+        now = datetime.now(timezone.utc)
+        inactive_seconds = (now - self.last_activity).total_seconds()
+        return inactive_seconds > self.INACTIVITY_TIMEOUT
+
+    def update_activity(self) -> None:
+        """Update the last activity timestamp."""
+        self.last_activity = datetime.now(timezone.utc)
+
 
 class ProcessManager:
     """
@@ -417,6 +513,20 @@ class ProcessManager:
         self.max_concurrent_jobs = max_concurrent_jobs
         self._job_semaphore = asyncio.Semaphore(max_concurrent_jobs)
         self._job_queue: List[dict] = []  # Queue of waiting jobs
+
+        # External path whitelist for allow_external file browsing
+        # Default allows common user directories for datasets, models, etc.
+        self.external_path_whitelist: List[Path] = [
+            Path.home(),  # User home directory
+            Path("/tmp"),  # Temp directory
+        ]
+        # Load additional paths from MACRUNNER_EXTERNAL_PATHS env var (colon-separated)
+        extra_paths = os.environ.get("MACRUNNER_EXTERNAL_PATHS", "")
+        if extra_paths:
+            for path_str in extra_paths.split(":"):
+                path = Path(path_str.strip()).expanduser().resolve()
+                if path.exists() and path not in self.external_path_whitelist:
+                    self.external_path_whitelist.append(path)
         self._active_jobs: int = 0
 
     def get_project_workspace(self, project_id: int) -> Path:
@@ -561,6 +671,9 @@ class ProcessManager:
                 env_created = await self._create_conda_environment(
                     workspace, python_version
                 )
+            elif env_type == EnvironmentType.docker:
+                # Docker: verify Dockerfile exists, no environment to create
+                env_created = await self._verify_docker_environment(workspace)
             else:
                 # Create venv environment (default)
                 env_created = await self._create_venv_environment(
@@ -706,6 +819,154 @@ class ProcessManager:
             print(f"Error creating conda environment: {e}")
             return False
 
+    async def _verify_docker_environment(self, workspace: Path) -> bool:
+        """
+        Verify Docker environment is ready.
+
+        For Docker projects, we check that:
+        1. Docker is installed and running
+        2. A Dockerfile or docker-compose.yml exists in the workspace
+
+        Args:
+            workspace: Project workspace directory
+
+        Returns:
+            True if Docker environment is ready
+        """
+        try:
+            # Check if Docker is available
+            docker_check = await asyncio.create_subprocess_exec(
+                "docker", "--version",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await docker_check.communicate()
+
+            if docker_check.returncode != 0:
+                print("[ERROR] Docker is not installed or not running")
+                return False
+
+            # Check for Dockerfile or docker-compose.yml
+            dockerfile = workspace / "Dockerfile"
+            compose_file = workspace / "docker-compose.yml"
+            compose_yaml = workspace / "docker-compose.yaml"
+
+            if not (dockerfile.exists() or compose_file.exists() or compose_yaml.exists()):
+                print(f"[WARN] No Dockerfile or docker-compose.yml found in {workspace}")
+                print("       Creating a default Dockerfile for Python projects...")
+                # Create a basic Python Dockerfile
+                default_dockerfile = '''FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt* ./
+RUN pip install --no-cache-dir -r requirements.txt 2>/dev/null || true
+
+# Copy the rest of the application
+COPY . .
+
+# Default command (can be overridden)
+CMD ["python", "main.py"]
+'''
+                dockerfile.write_text(default_dockerfile)
+                print(f"[INFO] Created default Dockerfile at {dockerfile}")
+
+            print("[INFO] Docker environment verified")
+            return True
+
+        except FileNotFoundError:
+            print("[ERROR] Docker is not installed")
+            return False
+        except Exception as e:
+            print(f"Error verifying Docker environment: {e}")
+            return False
+
+    async def _ensure_docker_image_built(
+        self,
+        project: Project,
+        workspace: Path,
+        log_path: Path,
+        job_id: int
+    ) -> bool:
+        """
+        Ensure the Docker image for the project is built.
+
+        Args:
+            project: Project to build image for
+            workspace: Project workspace directory
+            log_path: Path to log file
+            job_id: Job ID for log streaming
+
+        Returns:
+            True if image is built successfully
+        """
+        image_name = f"macrunner-project-{project.id}"
+
+        try:
+            # Check if image already exists
+            check_process = await asyncio.create_subprocess_exec(
+                "docker", "image", "inspect", image_name,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await check_process.communicate()
+
+            # If image exists, we're done
+            if check_process.returncode == 0:
+                print(f"[INFO] Docker image {image_name} already exists")
+                return True
+
+            # Build the image
+            print(f"[INFO] Building Docker image {image_name}...")
+
+            with open(log_path, "a") as log_file:
+                build_msg = f"🐳 Building Docker image {image_name}...\n"
+                log_file.write(build_msg)
+                for queue in self.log_queues[job_id]:
+                    await queue.put(build_msg)
+
+            process = await asyncio.create_subprocess_exec(
+                "docker", "build", "-t", image_name, ".",
+                cwd=workspace,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT
+            )
+
+            # Stream build output
+            async for line in process.stdout:
+                line_str = line.decode('utf-8', errors='replace')
+                with open(log_path, "a") as log_file:
+                    log_file.write(line_str)
+                for queue in self.log_queues[job_id]:
+                    await queue.put(line_str)
+
+            await process.wait()
+
+            if process.returncode != 0:
+                error_msg = f"❌ Docker build failed (exit code {process.returncode})\n"
+                with open(log_path, "a") as log_file:
+                    log_file.write(error_msg)
+                for queue in self.log_queues[job_id]:
+                    await queue.put(error_msg)
+                return False
+
+            success_msg = f"✅ Docker image {image_name} built successfully\n\n"
+            with open(log_path, "a") as log_file:
+                log_file.write(success_msg)
+            for queue in self.log_queues[job_id]:
+                await queue.put(success_msg)
+
+            return True
+
+        except Exception as e:
+            error_msg = f"❌ Docker build error: {e}\n"
+            with open(log_path, "a") as log_file:
+                log_file.write(error_msg)
+            for queue in self.log_queues[job_id]:
+                await queue.put(error_msg)
+            return False
+
     async def ensure_environment_exists(
         self,
         project: Project,
@@ -730,6 +991,11 @@ class ProcessManager:
 
         workspace = Path(project.workspace_path)
         env_type = project.environment_type or EnvironmentType.venv
+
+        # Docker environments don't have a local env directory
+        if env_type == EnvironmentType.docker:
+            return await self._verify_docker_environment(workspace)
+
         env_path = get_environment_path(workspace, env_type)
 
         # Check if environment directory exists
@@ -816,6 +1082,7 @@ class ProcessManager:
 
         For venv: source ./venv/bin/activate
         For conda: Uses 'conda run -p ./env --no-capture-output' wrapper
+        For docker: Uses 'docker run' with workspace mounted
 
         Args:
             project: Project with environment configuration
@@ -838,6 +1105,11 @@ class ProcessManager:
                 # Fallback: try direct activation (may not work in all shells)
                 print("[WARN] Conda not found, attempting direct activation")
                 return f'source "{env_path}/bin/activate"'
+        elif env_type == EnvironmentType.docker:
+            # Docker: build image if needed and use docker run
+            # Image name is based on project id
+            image_name = f"macrunner-project-{project.id}"
+            return f'docker run --rm -v "{workspace}:/app" -w /app {image_name}'
         else:
             # venv activation
             venv_path = workspace / "venv"
@@ -849,6 +1121,7 @@ class ProcessManager:
 
         For venv: source ./venv/bin/activate && command
         For conda: conda run -p ./env --no-capture-output command
+        For docker: docker run ... command
 
         Args:
             project: Project with environment configuration
@@ -863,6 +1136,9 @@ class ProcessManager:
 
         if env_type == EnvironmentType.conda:
             # conda run already wraps the command
+            return f'{activation} {command}'
+        elif env_type == EnvironmentType.docker:
+            # docker run wraps the command
             return f'{activation} {command}'
         else:
             # venv needs && to chain commands
@@ -897,6 +1173,35 @@ class ProcessManager:
         """
         workspace = Path(project.workspace_path)
         log_path = self.get_job_log_path(job.id)
+
+        # Basic command safety validation
+        is_safe, safety_error = validate_command_safety(command)
+        if not is_safe:
+            with open(log_path, "w") as log_file:
+                error_msg = f"❌ COMMAND BLOCKED: {safety_error}\n"
+                error_msg += f"   Command: {command[:100]}{'...' if len(command) > 100 else ''}\n"
+                error_msg += f"   If you need to run this command, use the terminal instead.\n"
+                log_file.write(error_msg)
+                for queue in self.log_queues[job.id]:
+                    await queue.put(error_msg)
+                    await queue.put(None)
+
+            job.status = JobStatus.FAILED
+            job.end_time = datetime.now(timezone.utc)
+            session.add(job)
+            session.commit()
+            return
+
+        # For Docker projects, ensure the image is built
+        env_type = project.environment_type or EnvironmentType.venv
+        if env_type == EnvironmentType.docker:
+            image_built = await self._ensure_docker_image_built(project, workspace, log_path, job.id)
+            if not image_built:
+                job.status = JobStatus.FAILED
+                job.end_time = datetime.now(timezone.utc)
+                session.add(job)
+                session.commit()
+                return
 
         # Verify environment exists before running
         env_exists = await self.ensure_environment_exists(project, session)
@@ -1063,7 +1368,7 @@ class ProcessManager:
         Stop a running job by sending SIGTERM, then SIGKILL if needed.
 
         The termination follows a graceful shutdown pattern:
-        1. Send SIGTERM to the entire process group
+        1. Send SIGTERM to the entire process group (POSIX) or process (Windows)
         2. Wait up to `timeout` seconds for graceful termination
         3. If still running, send SIGKILL to force termination
 
@@ -1082,18 +1387,22 @@ class ProcessManager:
             return False
 
         pid = process.pid
+
+        # Verify process exists
         try:
-            pgid = os.getpgid(pid)
+            os.kill(pid, 0)  # Signal 0 just checks if process exists
         except ProcessLookupError:
             # Process already dead
             self.running_processes.pop(job_id, None)
             return True
+        except PermissionError:
+            pass  # Process exists but we may not have permission
 
         try:
-            # Step 1: Send SIGTERM to the entire process group
-            # This ensures child processes are also terminated
-            print(f"Sending SIGTERM to job {job_id} (PID: {pid}, PGID: {pgid})")
-            os.killpg(pgid, signal.SIGTERM)
+            # Step 1: Send SIGTERM to the entire process group (POSIX)
+            # or just the process (Windows)
+            print(f"Sending SIGTERM to job {job_id} (PID: {pid})")
+            safe_kill_process_group(pid, signal.SIGTERM)
 
             # Step 2: Wait for graceful shutdown
             try:
@@ -1103,7 +1412,7 @@ class ProcessManager:
                 # Step 3: Force kill if still running after timeout
                 print(f"Job {job_id} did not respond to SIGTERM after {timeout}s, sending SIGKILL")
                 try:
-                    os.killpg(pgid, signal.SIGKILL)
+                    safe_kill_process_group(pid, signal.SIGKILL)
                     # Wait briefly for kill to take effect
                     await asyncio.wait_for(process.wait(), timeout=2.0)
                 except asyncio.TimeoutError:
@@ -1479,23 +1788,43 @@ class ProcessManager:
             # Cleanup
             self.running_processes.pop(job.id, None)
 
+    def is_path_in_whitelist(self, path: Path) -> bool:
+        """
+        Check if a path is within one of the whitelisted external directories.
+
+        Args:
+            path: Absolute path to check
+
+        Returns:
+            True if path is within a whitelisted directory
+        """
+        resolved = path.resolve()
+        for whitelist_path in self.external_path_whitelist:
+            try:
+                resolved.relative_to(whitelist_path.resolve())
+                return True
+            except ValueError:
+                continue
+        return False
+
     def validate_path(self, workspace: Path, relative_path: str, allow_external: bool = False) -> Path:
         """
         Validate and resolve a path, optionally allowing access outside workspace.
 
-        SECURITY NOTE: For trusted single-user environment, external path access
-        can be enabled to access global datasets, shared models, etc.
+        SECURITY: External paths are restricted to a whitelist of directories.
+        By default: user home directory and /tmp.
+        Configure MACRUNNER_EXTERNAL_PATHS env var to add more (colon-separated).
 
         Args:
             workspace: The project workspace root
             relative_path: Relative path from workspace root (or absolute if allow_external)
-            allow_external: If True, allows absolute paths and .. navigation outside workspace
+            allow_external: If True, allows absolute paths within whitelisted directories
 
         Returns:
             Resolved absolute path
 
         Raises:
-            ValueError: If path doesn't exist (when checking external paths)
+            ValueError: If path doesn't exist or is outside allowed directories
         """
         # Handle empty path as workspace root
         if not relative_path or relative_path == ".":
@@ -1507,6 +1836,12 @@ class ProcessManager:
                 full_path = Path(relative_path).resolve()
                 if not full_path.exists():
                     raise ValueError(f"Path does not exist: {full_path}")
+                # Security check: must be in whitelist
+                if not self.is_path_in_whitelist(full_path):
+                    raise ValueError(
+                        f"Path is outside allowed directories. "
+                        f"Allowed: {', '.join(str(p) for p in self.external_path_whitelist)}"
+                    )
                 return full_path
             else:
                 # For non-external requests, treat absolute paths as relative to workspace
@@ -1515,10 +1850,16 @@ class ProcessManager:
         # Resolve the full path
         full_path = (workspace / relative_path).resolve()
 
-        # In trusted mode with allow_external, permit .. navigation
+        # In trusted mode with allow_external, permit .. navigation (within whitelist)
         if allow_external:
             if not full_path.exists():
                 raise ValueError(f"Path does not exist: {full_path}")
+            # Security check: must be in whitelist
+            if not self.is_path_in_whitelist(full_path):
+                raise ValueError(
+                    f"Path is outside allowed directories. "
+                    f"Allowed: {', '.join(str(p) for p in self.external_path_whitelist)}"
+                )
             return full_path
 
         # Default: ensure the path is within the workspace
@@ -1623,6 +1964,40 @@ class ProcessManager:
                 return f.read()
         except UnicodeDecodeError:
             raise ValueError("Cannot read binary file as text")
+
+    def save_file_content(self, project_id: int, relative_path: str, content: str) -> None:
+        """
+        Save content to a file.
+
+        Args:
+            project_id: Project ID
+            relative_path: Relative path to file (must be within workspace)
+            content: Content to write
+
+        Raises:
+            ValueError: If path is invalid or outside workspace
+            IOError: If file cannot be written
+        """
+        workspace = self.get_project_workspace(project_id)
+
+        if not workspace.exists():
+            raise ValueError("Project workspace does not exist")
+
+        # Validate path is within workspace (no external writing)
+        file_path = self.validate_path(workspace, relative_path, allow_external=False)
+
+        # Don't allow creating files outside workspace
+        try:
+            file_path.relative_to(workspace.resolve())
+        except ValueError:
+            raise ValueError("Cannot write files outside workspace")
+
+        # Ensure parent directory exists
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write file
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
 
     def get_file_path(self, project_id: int, relative_path: str) -> Path:
         """
@@ -1808,6 +2183,38 @@ class ProcessManager:
         # Clean up queues
         if session_id in self.terminal_queues:
             del self.terminal_queues[session_id]
+
+    def cleanup_inactive_sessions(self) -> int:
+        """
+        Clean up PTY sessions that have been inactive for too long.
+
+        This prevents zombie PTY sessions from consuming resources.
+        Should be called periodically (e.g., every 5-10 minutes).
+
+        Returns:
+            Number of sessions cleaned up
+        """
+        cleaned = 0
+        sessions_to_close = []
+
+        for session_id, pty_session in self.pty_sessions.items():
+            # Check if session is dead or inactive
+            if not pty_session.is_alive() or pty_session.is_inactive():
+                sessions_to_close.append(session_id)
+
+        for session_id in sessions_to_close:
+            print(f"[INFO] Cleaning up inactive PTY session {session_id}")
+            self.close_terminal_session(session_id)
+            cleaned += 1
+
+        if cleaned > 0:
+            print(f"[INFO] Cleaned up {cleaned} inactive PTY session(s)")
+
+        return cleaned
+
+    def get_active_sessions_count(self) -> int:
+        """Get the number of active PTY sessions."""
+        return len(self.pty_sessions)
 
     def write_to_terminal(self, session_id: int, data: bytes) -> bool:
         """
