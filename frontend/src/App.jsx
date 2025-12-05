@@ -120,11 +120,22 @@ function App() {
     return unsubscribe;
   }, [subscribe, fetchProjects]);
 
-  // Fallback polling every 30s (instead of 3s) as backup
+  // Fallback polling only when WebSocket is disconnected
+  // When statusConnected is true, we rely on WebSocket for real-time updates
   useEffect(() => {
-    const interval = setInterval(fetchProjects, 30000);
+    // Skip polling if WebSocket is connected
+    if (statusConnected) {
+      return;
+    }
+
+    // Fallback polling every 10s when WebSocket is disconnected
+    const interval = setInterval(() => {
+      console.log('[Polling] WebSocket disconnected, fetching projects...');
+      fetchProjects();
+    }, 10000);
+
     return () => clearInterval(interval);
-  }, [fetchProjects]);
+  }, [fetchProjects, statusConnected]);
 
   // Handlers
   const handleCreateProject = async (data) => {

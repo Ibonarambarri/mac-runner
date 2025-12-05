@@ -729,12 +729,20 @@ class ProcessManager:
                 # Cleanup
                 self.running_processes.pop(job.id, None)
 
-    async def stop_job(self, job_id: int) -> bool:
+    async def stop_job(self, job_id: int, timeout: float = 5.0) -> bool:
         """
-        Stop a running job by sending SIGTERM to its process group.
+        Stop a running job by sending SIGTERM, then SIGKILL if needed.
+
+        The termination follows a graceful shutdown pattern:
+        1. Send SIGTERM to the entire process group
+        2. Wait up to `timeout` seconds for graceful termination
+        3. If still running, send SIGKILL to force termination
+
+        This handles processes that ignore SIGTERM (common in some Python scripts).
 
         Args:
             job_id: ID of the job to stop
+            timeout: Seconds to wait for graceful shutdown before SIGKILL (default: 5.0)
 
         Returns:
             True if process was stopped, False if not found
@@ -744,26 +752,48 @@ class ProcessManager:
         if process is None:
             return False
 
+        pid = process.pid
         try:
-            # Send SIGTERM to the entire process group
-            # This ensures child processes are also terminated
-            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            pgid = os.getpgid(pid)
+        except ProcessLookupError:
+            # Process already dead
+            self.running_processes.pop(job_id, None)
+            return True
 
-            # Wait a bit for graceful shutdown
+        try:
+            # Step 1: Send SIGTERM to the entire process group
+            # This ensures child processes are also terminated
+            print(f"Sending SIGTERM to job {job_id} (PID: {pid}, PGID: {pgid})")
+            os.killpg(pgid, signal.SIGTERM)
+
+            # Step 2: Wait for graceful shutdown
             try:
-                await asyncio.wait_for(process.wait(), timeout=5.0)
+                await asyncio.wait_for(process.wait(), timeout=timeout)
+                print(f"Job {job_id} terminated gracefully")
             except asyncio.TimeoutError:
-                # Force kill if still running
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                # Step 3: Force kill if still running after timeout
+                print(f"Job {job_id} did not respond to SIGTERM after {timeout}s, sending SIGKILL")
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                    # Wait briefly for kill to take effect
+                    await asyncio.wait_for(process.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    print(f"Warning: Job {job_id} still running after SIGKILL")
+                except ProcessLookupError:
+                    pass  # Already dead
 
             return True
 
         except ProcessLookupError:
             # Process already dead
+            print(f"Job {job_id} process already terminated")
             return True
         except Exception as e:
             print(f"Error stopping job {job_id}: {e}")
             return False
+        finally:
+            # Always clean up from running processes dict
+            self.running_processes.pop(job_id, None)
 
     def subscribe_to_logs(self, job_id: int) -> asyncio.Queue:
         """

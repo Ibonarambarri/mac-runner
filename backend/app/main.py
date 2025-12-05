@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
+import os as os_module
 from sqlmodel import Session, select
 
 from .database import create_db_and_tables, get_session, engine
@@ -82,6 +83,7 @@ async def lifespan(app: FastAPI):
     """
     Application lifespan handler.
     Initializes database and process manager on startup.
+    Restores persisted Jupyter/TensorBoard processes.
     """
     # Startup
     create_db_and_tables()
@@ -90,12 +92,43 @@ async def lifespan(app: FastAPI):
     print(f"   Workspaces: {BASE_PATH / 'workspaces'}")
     print(f"   Logs: {BASE_PATH / 'logs'}")
 
+    # Restore persisted Jupyter and TensorBoard processes
+    restore_jupyter_processes()
+    restore_tensorboard_processes()
+
     yield
 
     # Shutdown - stop all running processes
     manager = get_process_manager()
     for job_id in list(manager.running_processes.keys()):
         await manager.stop_job(job_id)
+
+    # Gracefully terminate Jupyter processes
+    for project_id, proc_info in list(jupyter_processes.items()):
+        try:
+            pid = proc_info.get("pid") or (proc_info.get("process").pid if proc_info.get("process") else None)
+            if pid and is_process_alive(pid):
+                import os
+                import signal
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+                print(f"   Stopped Jupyter for project {project_id}")
+        except Exception as e:
+            print(f"   Warning: Could not stop Jupyter for project {project_id}: {e}")
+        remove_jupyter_pid(project_id)
+
+    # Gracefully terminate TensorBoard processes
+    for key, proc_info in list(tensorboard_processes.items()):
+        try:
+            pid = proc_info.get("pid") or (proc_info.get("process").pid if proc_info.get("process") else None)
+            if pid and is_process_alive(pid):
+                import os
+                import signal
+                os.kill(pid, signal.SIGTERM)
+                print(f"   Stopped TensorBoard {key}")
+        except Exception as e:
+            print(f"   Warning: Could not stop TensorBoard {key}: {e}")
+        remove_tensorboard_pid(key)
+
     print("👋 MacRunner shutdown complete")
 
 
@@ -791,6 +824,17 @@ def save_project_env(
 # FILE EXPLORER ENDPOINTS
 # ============================================================================
 
+def remove_file(path: str) -> None:
+    """
+    Background task to remove a temporary file after it has been sent.
+    Used by ZIP download endpoints to clean up temporary files.
+    """
+    try:
+        os_module.unlink(path)
+    except OSError as e:
+        print(f"Warning: Could not remove temporary file {path}: {e}")
+
+
 @app.get("/projects/{project_id}/files", response_model=List[FileInfo])
 def list_files(
     project_id: int,
@@ -879,10 +923,12 @@ def download_file(
 def download_folder_zip(
     project_id: int,
     path: str = "",
+    background_tasks: BackgroundTasks = None,
     session: Session = Depends(get_session)
 ):
     """
     Download a folder as a ZIP archive.
+    The temporary ZIP file is automatically deleted after the response is sent.
     """
     project = session.get(Project, project_id)
     if not project:
@@ -895,11 +941,14 @@ def download_folder_zip(
     try:
         zip_path = manager.create_zip_archive(project_id, path)
         folder_name = Path(path).name if path else project.name
+
+        # Schedule cleanup of temporary file after response is sent
+        background_tasks.add_task(remove_file, str(zip_path))
+
         return FileResponse(
             path=zip_path,
             filename=f"{folder_name}.zip",
-            media_type="application/zip",
-            background=None  # Don't delete immediately, let client finish download
+            media_type="application/zip"
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -909,10 +958,12 @@ def download_folder_zip(
 def download_batch_files(
     project_id: int,
     paths: List[str] = Query(...),
+    background_tasks: BackgroundTasks = None,
     session: Session = Depends(get_session)
 ):
     """
     Download multiple selected files/folders as a single ZIP archive.
+    The temporary ZIP file is automatically deleted after the response is sent.
 
     Args:
         project_id: Project ID
@@ -931,11 +982,14 @@ def download_batch_files(
     manager = get_process_manager()
     try:
         zip_path = manager.create_batch_zip_archive(project_id, paths)
+
+        # Schedule cleanup of temporary file after response is sent
+        background_tasks.add_task(remove_file, str(zip_path))
+
         return FileResponse(
             path=zip_path,
             filename=f"{project.name}_selected.zip",
-            media_type="application/zip",
-            background=None
+            media_type="application/zip"
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -947,6 +1001,185 @@ def download_batch_files(
 
 # Track running Jupyter Lab processes
 jupyter_processes: dict = {}
+
+# PID file paths for process persistence
+JUPYTER_PID_DIR = BASE_PATH / "logs" / "pids"
+TENSORBOARD_PID_DIR = BASE_PATH / "logs" / "pids"
+
+
+def save_jupyter_pid(project_id: int, pid: int, port: int, token: str, url: str) -> None:
+    """Save Jupyter process info to a PID file for persistence across restarts."""
+    import json
+    JUPYTER_PID_DIR.mkdir(parents=True, exist_ok=True)
+    pid_file = JUPYTER_PID_DIR / f"jupyter_{project_id}.json"
+    with open(pid_file, "w") as f:
+        json.dump({
+            "pid": pid,
+            "port": port,
+            "token": token,
+            "url": url,
+            "project_id": project_id
+        }, f)
+
+
+def load_jupyter_pid(project_id: int) -> Optional[dict]:
+    """Load Jupyter process info from PID file."""
+    import json
+    pid_file = JUPYTER_PID_DIR / f"jupyter_{project_id}.json"
+    if pid_file.exists():
+        try:
+            with open(pid_file, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return None
+    return None
+
+
+def remove_jupyter_pid(project_id: int) -> None:
+    """Remove Jupyter PID file."""
+    pid_file = JUPYTER_PID_DIR / f"jupyter_{project_id}.json"
+    try:
+        pid_file.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def save_tensorboard_pid(key: str, pid: int, port: int, url: str, log_dir: str) -> None:
+    """Save TensorBoard process info to a PID file for persistence across restarts."""
+    import json
+    TENSORBOARD_PID_DIR.mkdir(parents=True, exist_ok=True)
+    # Sanitize key for filename (replace : with _)
+    safe_key = key.replace(":", "_")
+    pid_file = TENSORBOARD_PID_DIR / f"tensorboard_{safe_key}.json"
+    with open(pid_file, "w") as f:
+        json.dump({
+            "pid": pid,
+            "port": port,
+            "url": url,
+            "log_dir": log_dir,
+            "key": key
+        }, f)
+
+
+def load_tensorboard_pid(key: str) -> Optional[dict]:
+    """Load TensorBoard process info from PID file."""
+    import json
+    safe_key = key.replace(":", "_")
+    pid_file = TENSORBOARD_PID_DIR / f"tensorboard_{safe_key}.json"
+    if pid_file.exists():
+        try:
+            with open(pid_file, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return None
+    return None
+
+
+def remove_tensorboard_pid(key: str) -> None:
+    """Remove TensorBoard PID file."""
+    safe_key = key.replace(":", "_")
+    pid_file = TENSORBOARD_PID_DIR / f"tensorboard_{safe_key}.json"
+    try:
+        pid_file.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def is_process_alive(pid: int) -> bool:
+    """Check if a process with given PID is still running using psutil."""
+    try:
+        import psutil
+        return psutil.pid_exists(pid) and psutil.Process(pid).is_running()
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return False
+
+
+def restore_jupyter_processes() -> None:
+    """
+    Restore Jupyter process state from PID files on startup.
+    Verifies processes are still alive and rebuilds in-memory state.
+    """
+    import subprocess
+    JUPYTER_PID_DIR.mkdir(parents=True, exist_ok=True)
+
+    for pid_file in JUPYTER_PID_DIR.glob("jupyter_*.json"):
+        try:
+            import json
+            with open(pid_file, "r") as f:
+                data = json.load(f)
+
+            project_id = data.get("project_id")
+            pid = data.get("pid")
+
+            if project_id is None or pid is None:
+                pid_file.unlink(missing_ok=True)
+                continue
+
+            if is_process_alive(pid):
+                # Process is still running, restore to memory
+                # Create a dummy process object to track it
+                print(f"🔄 Restored Jupyter process for project {project_id} (PID: {pid})")
+                jupyter_processes[project_id] = {
+                    "process": None,  # Can't restore subprocess.Popen object
+                    "pid": pid,
+                    "port": data.get("port"),
+                    "token": data.get("token"),
+                    "url": data.get("url"),
+                    "restored": True
+                }
+            else:
+                # Process is dead, clean up PID file
+                print(f"🧹 Cleaning up stale Jupyter PID file for project {project_id}")
+                pid_file.unlink(missing_ok=True)
+        except Exception as e:
+            print(f"⚠️ Error restoring Jupyter process from {pid_file}: {e}")
+            try:
+                pid_file.unlink(missing_ok=True)
+            except:
+                pass
+
+
+def restore_tensorboard_processes() -> None:
+    """
+    Restore TensorBoard process state from PID files on startup.
+    Verifies processes are still alive and rebuilds in-memory state.
+    """
+    TENSORBOARD_PID_DIR.mkdir(parents=True, exist_ok=True)
+
+    for pid_file in TENSORBOARD_PID_DIR.glob("tensorboard_*.json"):
+        try:
+            import json
+            with open(pid_file, "r") as f:
+                data = json.load(f)
+
+            key = data.get("key")
+            pid = data.get("pid")
+
+            if key is None or pid is None:
+                pid_file.unlink(missing_ok=True)
+                continue
+
+            if is_process_alive(pid):
+                # Process is still running, restore to memory
+                print(f"🔄 Restored TensorBoard process {key} (PID: {pid})")
+                tensorboard_processes[key] = {
+                    "process": None,  # Can't restore subprocess.Popen object
+                    "pid": pid,
+                    "port": data.get("port"),
+                    "url": data.get("url"),
+                    "log_dir": data.get("log_dir"),
+                    "restored": True
+                }
+            else:
+                # Process is dead, clean up PID file
+                print(f"🧹 Cleaning up stale TensorBoard PID file for {key}")
+                pid_file.unlink(missing_ok=True)
+        except Exception as e:
+            print(f"⚠️ Error restoring TensorBoard process from {pid_file}: {e}")
+            try:
+                pid_file.unlink(missing_ok=True)
+            except:
+                pass
 
 
 @app.get("/projects/{project_id}/notebook/render")
@@ -1163,16 +1396,31 @@ async def start_jupyter_lab(
     # Check if already running for this project
     if project_id in jupyter_processes:
         proc_info = jupyter_processes[project_id]
-        proc = proc_info["process"]
-        if proc.poll() is None:  # Still running
-            return {
-                "status": "already_running",
-                "url": proc_info["url"],
-                "port": proc_info["port"]
-            }
+        # Handle restored processes (no subprocess.Popen object)
+        if proc_info.get("restored"):
+            pid = proc_info.get("pid")
+            if pid and is_process_alive(pid):
+                return {
+                    "status": "already_running",
+                    "url": proc_info["url"],
+                    "port": proc_info["port"]
+                }
+            else:
+                # Process died, clean up
+                del jupyter_processes[project_id]
+                remove_jupyter_pid(project_id)
         else:
-            # Process died, clean up
-            del jupyter_processes[project_id]
+            proc = proc_info["process"]
+            if proc.poll() is None:  # Still running
+                return {
+                    "status": "already_running",
+                    "url": proc_info["url"],
+                    "port": proc_info["port"]
+                }
+            else:
+                # Process died, clean up
+                del jupyter_processes[project_id]
+                remove_jupyter_pid(project_id)
 
     # Find a free port
     try:
@@ -1228,13 +1476,17 @@ async def start_jupyter_lab(
         hostname = get_accessible_hostname()
         url = f"http://{hostname}:{port}/lab?token={token}"
 
-        # Store process info
+        # Store process info in memory
         jupyter_processes[project_id] = {
             "process": process,
+            "pid": process.pid,
             "port": port,
             "token": token,
             "url": url
         }
+
+        # Persist PID to file for recovery after restart
+        save_jupyter_pid(project_id, process.pid, port, token, url)
 
         return {
             "status": "started",
@@ -1268,14 +1520,24 @@ async def stop_jupyter_lab(
         return {"status": "not_running"}
 
     proc_info = jupyter_processes[project_id]
-    proc = proc_info["process"]
+    import os
+    import signal
 
-    if proc.poll() is None:  # Still running
-        import os
-        import signal
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    # Handle restored processes (no subprocess.Popen object)
+    if proc_info.get("restored"):
+        pid = proc_info.get("pid")
+        if pid and is_process_alive(pid):
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+    else:
+        proc = proc_info["process"]
+        if proc.poll() is None:  # Still running
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
 
     del jupyter_processes[project_id]
+    remove_jupyter_pid(project_id)
 
     return {"status": "stopped"}
 
@@ -1296,18 +1558,34 @@ def get_jupyter_status(
         return {"running": False}
 
     proc_info = jupyter_processes[project_id]
-    proc = proc_info["process"]
 
-    if proc.poll() is None:  # Still running
-        return {
-            "running": True,
-            "url": proc_info["url"],
-            "port": proc_info["port"]
-        }
+    # Handle restored processes (no subprocess.Popen object)
+    if proc_info.get("restored"):
+        pid = proc_info.get("pid")
+        if pid and is_process_alive(pid):
+            return {
+                "running": True,
+                "url": proc_info["url"],
+                "port": proc_info["port"]
+            }
+        else:
+            # Process died, clean up
+            del jupyter_processes[project_id]
+            remove_jupyter_pid(project_id)
+            return {"running": False}
     else:
-        # Process died, clean up
-        del jupyter_processes[project_id]
-        return {"running": False}
+        proc = proc_info["process"]
+        if proc.poll() is None:  # Still running
+            return {
+                "running": True,
+                "url": proc_info["url"],
+                "port": proc_info["port"]
+            }
+        else:
+            # Process died, clean up
+            del jupyter_processes[project_id]
+            remove_jupyter_pid(project_id)
+            return {"running": False}
 
 
 # ============================================================================
@@ -1400,13 +1678,32 @@ async def start_tensorboard(
     # Check if already running for this project
     key = f"{project_id}:{log_dir}"
     if key in tensorboard_processes:
-        proc = tensorboard_processes[key]["process"]
-        if proc.poll() is None:  # Still running
-            return {
-                "status": "already_running",
-                "url": tensorboard_processes[key]["url"],
-                "port": tensorboard_processes[key]["port"]
-            }
+        proc_info = tensorboard_processes[key]
+        # Handle restored processes (no subprocess.Popen object)
+        if proc_info.get("restored"):
+            pid = proc_info.get("pid")
+            if pid and is_process_alive(pid):
+                return {
+                    "status": "already_running",
+                    "url": proc_info["url"],
+                    "port": proc_info["port"]
+                }
+            else:
+                # Process died, clean up
+                del tensorboard_processes[key]
+                remove_tensorboard_pid(key)
+        else:
+            proc = proc_info["process"]
+            if proc.poll() is None:  # Still running
+                return {
+                    "status": "already_running",
+                    "url": proc_info["url"],
+                    "port": proc_info["port"]
+                }
+            else:
+                # Process died, clean up
+                del tensorboard_processes[key]
+                remove_tensorboard_pid(key)
 
     # Find an available port starting from the requested one
     import socket
@@ -1452,10 +1749,14 @@ async def start_tensorboard(
         url = f"http://{hostname}:{actual_port}"
         tensorboard_processes[key] = {
             "process": proc,
+            "pid": proc.pid,
             "port": actual_port,
             "url": url,
             "log_dir": log_dir
         }
+
+        # Persist PID to file for recovery after restart
+        save_tensorboard_pid(key, proc.pid, actual_port, url, log_dir)
 
         return {
             "status": "started",
@@ -1478,6 +1779,8 @@ async def stop_tensorboard(
     """
     Stop a running TensorBoard server.
     """
+    import signal
+
     project = session.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -1486,15 +1789,36 @@ async def stop_tensorboard(
     if key not in tensorboard_processes:
         return {"status": "not_running"}
 
-    proc = tensorboard_processes[key]["process"]
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except:
-            proc.kill()
+    proc_info = tensorboard_processes[key]
+
+    # Handle restored processes (no subprocess.Popen object)
+    if proc_info.get("restored"):
+        pid = proc_info.get("pid")
+        if pid and is_process_alive(pid):
+            try:
+                os.kill(pid, signal.SIGTERM)
+                # Wait for graceful shutdown
+                import time
+                for _ in range(10):  # 5 second timeout
+                    time.sleep(0.5)
+                    if not is_process_alive(pid):
+                        break
+                else:
+                    # Force kill if still running
+                    os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    else:
+        proc = proc_info["process"]
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except:
+                proc.kill()
 
     del tensorboard_processes[key]
+    remove_tensorboard_pid(key)
     return {"status": "stopped"}
 
 
@@ -1513,16 +1837,31 @@ def get_tensorboard_status(
     running = []
     for key, info in list(tensorboard_processes.items()):
         if key.startswith(f"{project_id}:"):
-            proc = info["process"]
-            if proc.poll() is None:  # Still running
-                running.append({
-                    "log_dir": info["log_dir"],
-                    "url": info["url"],
-                    "port": info["port"]
-                })
+            # Handle restored processes (no subprocess.Popen object)
+            if info.get("restored"):
+                pid = info.get("pid")
+                if pid and is_process_alive(pid):
+                    running.append({
+                        "log_dir": info["log_dir"],
+                        "url": info["url"],
+                        "port": info["port"]
+                    })
+                else:
+                    # Clean up dead processes
+                    del tensorboard_processes[key]
+                    remove_tensorboard_pid(key)
             else:
-                # Clean up dead processes
-                del tensorboard_processes[key]
+                proc = info["process"]
+                if proc.poll() is None:  # Still running
+                    running.append({
+                        "log_dir": info["log_dir"],
+                        "url": info["url"],
+                        "port": info["port"]
+                    })
+                else:
+                    # Clean up dead processes
+                    del tensorboard_processes[key]
+                    remove_tensorboard_pid(key)
 
     return {"running": running}
 

@@ -107,10 +107,14 @@ async def stream_logs(websocket: WebSocket, job_id: int):
     WebSocket handler for streaming job logs in real-time.
 
     Flow:
-    1. Send existing logs from file (if any)
-    2. Subscribe to live log queue
+    1. Subscribe to live log queue FIRST (to avoid missing lines)
+    2. Send existing logs from file (if any)
     3. Stream new lines as they arrive
     4. Handle disconnection gracefully
+
+    IMPORTANT: We subscribe BEFORE reading historical logs to prevent
+    a race condition where logs written between reading the file and
+    subscribing would be lost.
 
     Args:
         websocket: FastAPI WebSocket connection
@@ -134,6 +138,11 @@ async def stream_logs(websocket: WebSocket, job_id: int):
 
         job_status = job.status
 
+    # CRITICAL: Subscribe to live logs BEFORE reading historical logs
+    # This prevents a race condition where logs written between
+    # reading the file and subscribing would be lost
+    queue = manager.subscribe_to_logs(job_id)
+
     # Send existing logs from file
     try:
         async for line in manager.get_existing_logs(job_id):
@@ -146,6 +155,7 @@ async def stream_logs(websocket: WebSocket, job_id: int):
 
     # If job is already finished, close connection
     if job_status in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.STOPPED]:
+        manager.unsubscribe_from_logs(job_id, queue)
         await websocket.send_json({
             "type": "end",
             "message": f"Job finished with status: {job_status.value}"
@@ -153,10 +163,7 @@ async def stream_logs(websocket: WebSocket, job_id: int):
         await websocket.close()
         return
 
-    # Subscribe to live logs
-    queue = manager.subscribe_to_logs(job_id)
-
-    # Re-check job status after subscribing to avoid race condition
+    # Re-check job status after sending historical logs to catch jobs that finished during transmission
     with Session(engine) as session:
         job = session.get(Job, job_id)
         if job and job.status in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.STOPPED]:

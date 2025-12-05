@@ -1,62 +1,67 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { Virtuoso } from 'react-virtuoso';
 import { Terminal, Wifi, WifiOff, CheckCircle2, XCircle, ChevronDown, X } from 'lucide-react';
 
 /**
  * LogViewer Component
  *
- * Terminal-style log viewer with:
+ * Terminal-style log viewer with virtualization for performance:
+ * - Uses react-virtuoso for efficient rendering of thousands of lines
  * - Smart auto-scroll (stops when user scrolls up, resumes at bottom)
  * - "New logs" indicator when auto-scroll is paused
  * - Connection status indicator
  * - Monospace font, dark background
- * - Color coding for stderr
+ * - Color coding for stderr, errors, warnings
  */
 export function LogViewer({ logs, isConnected, isComplete, error, jobId, onClear }) {
-  const containerRef = useRef(null);
-  const autoScrollRef = useRef(true);
+  const virtuosoRef = useRef(null);
+  const [atBottom, setAtBottom] = useState(true);
   const [showNewLogsButton, setShowNewLogsButton] = useState(false);
   const prevLogsLengthRef = useRef(logs.length);
 
   // Track when new logs arrive while not at bottom
   useEffect(() => {
-    if (logs.length > prevLogsLengthRef.current && !autoScrollRef.current) {
+    if (logs.length > prevLogsLengthRef.current && !atBottom) {
       setShowNewLogsButton(true);
     }
     prevLogsLengthRef.current = logs.length;
-  }, [logs.length]);
+  }, [logs.length, atBottom]);
 
-  // Auto-scroll to bottom when new logs arrive
+  // Auto-scroll to bottom when new logs arrive (if at bottom)
   useEffect(() => {
-    if (autoScrollRef.current && containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    if (atBottom && virtuosoRef.current && logs.length > 0) {
+      virtuosoRef.current.scrollToIndex({
+        index: logs.length - 1,
+        align: 'end',
+        behavior: 'auto'
+      });
       setShowNewLogsButton(false);
     }
-  }, [logs]);
+  }, [logs.length, atBottom]);
 
-  // Detect if user has scrolled up (disable auto-scroll)
-  const handleScroll = () => {
-    if (!containerRef.current) return;
-
-    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-    autoScrollRef.current = isAtBottom;
-
-    if (isAtBottom) {
+  // Handle at-bottom state changes
+  const handleAtBottomStateChange = useCallback((bottom) => {
+    setAtBottom(bottom);
+    if (bottom) {
       setShowNewLogsButton(false);
     }
-  };
+  }, []);
 
   // Scroll to bottom and re-enable auto-scroll
-  const scrollToBottom = () => {
-    if (containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-      autoScrollRef.current = true;
+  const scrollToBottom = useCallback(() => {
+    if (virtuosoRef.current && logs.length > 0) {
+      virtuosoRef.current.scrollToIndex({
+        index: logs.length - 1,
+        align: 'end',
+        behavior: 'smooth'
+      });
+      setAtBottom(true);
       setShowNewLogsButton(false);
     }
-  };
+  }, [logs.length]);
 
   // Format log line with color coding
-  const formatLine = (line, index) => {
+  const formatLine = useCallback((line) => {
     const isStderr = line.startsWith('[stderr]');
     const isError = line.toLowerCase().includes('error') || line.toLowerCase().includes('exception');
     const isWarning = line.toLowerCase().includes('warning') || line.toLowerCase().includes('warn');
@@ -68,15 +73,22 @@ export function LogViewer({ logs, isConnected, isComplete, error, jobId, onClear
     else if (isSuccess) className = 'text-terminal-green';
     else if (line.startsWith('===')) className = 'text-terminal-blue font-semibold';
 
+    return className;
+  }, []);
+
+  // Render individual log line
+  const renderLogLine = useCallback((index) => {
+    const line = logs[index];
+    const className = formatLine(line);
+
     return (
       <div
-        key={index}
-        className={`${className} whitespace-pre-wrap break-all leading-relaxed`}
+        className={`${className} whitespace-pre-wrap break-all leading-relaxed px-3 sm:px-4 py-0.5`}
       >
         {line}
       </div>
     );
-  };
+  }, [logs, formatLine]);
 
   return (
     <div className="flex flex-col h-full bg-black rounded-lg border border-slate-800 overflow-hidden">
@@ -87,6 +99,11 @@ export function LogViewer({ logs, isConnected, isComplete, error, jobId, onClear
           <span className="text-sm font-medium text-slate-400">
             {jobId ? `Job #${jobId}` : 'Output'}
           </span>
+          {logs.length > 0 && (
+            <span className="text-xs text-slate-600">
+              ({logs.length.toLocaleString()} lines)
+            </span>
+          )}
         </div>
 
         {/* Status indicator and clear button */}
@@ -127,31 +144,39 @@ export function LogViewer({ logs, isConnected, isComplete, error, jobId, onClear
         </div>
       </div>
 
-      {/* Log content */}
+      {/* Log content - Virtualized */}
       <div className="relative flex-1">
-        <div
-          ref={containerRef}
-          onScroll={handleScroll}
-          className="h-full overflow-auto p-3 sm:p-4 font-mono text-xs sm:text-sm no-bounce touch-pan-y"
-        >
-          {logs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-slate-600">
-              <Terminal className="w-10 h-10 sm:w-12 sm:h-12 mb-4 opacity-50" />
-              <p>Waiting for output...</p>
-              {!isConnected && !error && (
-                <p className="text-xs mt-2">Run a job to see logs here</p>
-              )}
-            </div>
-          ) : (
-            <>
-              {logs.map((line, index) => formatLine(line, index))}
-              {/* Blinking cursor when connected and not complete */}
-              {isConnected && !isComplete && (
-                <span className="terminal-cursor text-terminal-green" />
-              )}
-            </>
-          )}
-        </div>
+        {logs.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-slate-600">
+            <Terminal className="w-10 h-10 sm:w-12 sm:h-12 mb-4 opacity-50" />
+            <p>Waiting for output...</p>
+            {!isConnected && !error && (
+              <p className="text-xs mt-2">Run a job to see logs here</p>
+            )}
+          </div>
+        ) : (
+          <Virtuoso
+            ref={virtuosoRef}
+            style={{ height: '100%' }}
+            totalCount={logs.length}
+            itemContent={renderLogLine}
+            followOutput="auto"
+            atBottomStateChange={handleAtBottomStateChange}
+            atBottomThreshold={100}
+            overscan={200}
+            className="font-mono text-xs sm:text-sm"
+            components={{
+              Footer: () => (
+                // Blinking cursor when connected and not complete
+                isConnected && !isComplete ? (
+                  <div className="px-3 sm:px-4 py-0.5">
+                    <span className="terminal-cursor text-terminal-green" />
+                  </div>
+                ) : null
+              )
+            }}
+          />
+        )}
 
         {/* New logs indicator button */}
         {showNewLogsButton && (
