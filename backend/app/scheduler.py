@@ -73,12 +73,12 @@ def start_scheduler():
         for task in tasks:
             try:
                 add_scheduled_job(task)
-                print(f"  Loaded scheduled task: {task.name} (cron: {task.cron_expression})")
+                print(f"[INFO] Loaded scheduled task: {task.name} (cron: {task.cron_expression})")
             except Exception as e:
-                print(f"  Warning: Failed to load task {task.name}: {e}")
+                print(f"[WARN] Failed to load task {task.name}: {e}")
 
     _scheduler.start()
-    print(f"  Scheduler started with {len(_scheduler.get_jobs())} jobs")
+    print(f"[INFO] Scheduler started with {len(_scheduler.get_jobs())} jobs")
 
 
 def shutdown_scheduler():
@@ -87,7 +87,7 @@ def shutdown_scheduler():
 
     if _scheduler and _scheduler.running:
         _scheduler.shutdown(wait=False)
-        print("  Scheduler stopped")
+        print("[INFO] Scheduler stopped")
 
 
 async def execute_scheduled_task(task_id: int):
@@ -99,8 +99,15 @@ async def execute_scheduled_task(task_id: int):
     global _process_manager
 
     if _process_manager is None:
-        print(f"Warning: ProcessManager not available, skipping task {task_id}")
+        print(f"[WARN] ProcessManager not available, skipping task {task_id}")
         return
+
+    # Extract IDs and command within session scope, then run in background
+    project_id = None
+    job_id = None
+    command = None
+    task_name = None
+    project_name = None
 
     with Session(engine) as session:
         # Get the scheduled task
@@ -111,8 +118,14 @@ async def execute_scheduled_task(task_id: int):
         # Get the project
         project = session.get(Project, task.project_id)
         if not project:
-            print(f"Warning: Project {task.project_id} not found for task {task_id}")
+            print(f"[WARN] Project {task.project_id} not found for task {task_id}")
             return
+
+        # Store values for background task
+        project_id = project.id
+        command = task.command
+        task_name = task.name
+        project_name = project.name
 
         # Create a new job
         job = Job(
@@ -124,6 +137,8 @@ async def execute_scheduled_task(task_id: int):
         session.add(job)
         session.commit()
         session.refresh(job)
+
+        job_id = job.id
 
         # Update task's last_run and last_job_id
         task.last_run = datetime.now(timezone.utc)
@@ -138,12 +153,40 @@ async def execute_scheduled_task(task_id: int):
         session.add(task)
         session.commit()
 
-        print(f"[Scheduler] Running task '{task.name}' for project {project.name}")
+    print(f"[Scheduler] Running task '{task_name}' for project {project_name}")
 
-        # Execute the command asynchronously
-        asyncio.create_task(
-            _process_manager.run_command(project, job, task.command, session)
-        )
+    # Execute the command in a background task with its own session
+    asyncio.create_task(
+        _run_job_background(project_id, job_id, command)
+    )
+
+
+async def _run_job_background(project_id: int, job_id: int, command: str):
+    """
+    Background task runner that creates its own database session.
+
+    This avoids session lifecycle issues when running async tasks from the scheduler.
+
+    Args:
+        project_id: ID of the project to run the command in
+        job_id: ID of the job to update
+        command: The command string to execute
+    """
+    global _process_manager
+
+    if _process_manager is None:
+        print(f"[ERROR] ProcessManager not available for job {job_id}")
+        return
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        job = session.get(Job, job_id)
+
+        if not project or not job:
+            print(f"[ERROR] Project or Job not found for scheduled task (project={project_id}, job={job_id})")
+            return
+
+        await _process_manager.run_command(project, job, command, session)
 
 
 def add_scheduled_job(task: ScheduledTask) -> bool:

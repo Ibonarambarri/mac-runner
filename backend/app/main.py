@@ -42,7 +42,7 @@ BASE_PATH = Path(__file__).parent.parent
 ROOT_ENV_PATH = BASE_PATH / ".env"
 if ROOT_ENV_PATH.exists():
     load_dotenv(ROOT_ENV_PATH)
-    print(f"📦 Loaded environment from {ROOT_ENV_PATH}")
+    print(f"[INFO] Loaded environment from {ROOT_ENV_PATH}")
 
 
 def get_accessible_hostname() -> str:
@@ -74,12 +74,12 @@ def get_accessible_hostname() -> str:
             for addr in addrs:
                 # Check for IPv4 addresses in Tailscale's CGNAT range (100.64.0.0/10)
                 if addr.family == socket.AF_INET and addr.address.startswith("100."):
-                    print(f"🌐 Detected Tailscale IP: {addr.address} on {interface}")
+                    print(f"[INFO] Detected Tailscale IP: {addr.address} on {interface}")
                     return addr.address
     except ImportError:
-        print("⚠️ psutil not available for Tailscale IP detection")
+        print("[WARN] psutil not available for Tailscale IP detection")
     except Exception as e:
-        print(f"⚠️ Error detecting Tailscale IP: {e}")
+        print(f"[WARN] Error detecting Tailscale IP: {e}")
 
     # Priority 3: Fallback to hostname
     return socket.gethostname()
@@ -95,9 +95,9 @@ async def lifespan(app: FastAPI):
     # Startup
     create_db_and_tables()
     manager = init_process_manager(BASE_PATH)
-    print("🚀 MacRunner initialized")
-    print(f"   Workspaces: {BASE_PATH / 'workspaces'}")
-    print(f"   Logs: {BASE_PATH / 'logs'}")
+    print("[INFO] MacRunner initialized")
+    print(f"       Workspaces: {BASE_PATH / 'workspaces'}")
+    print(f"       Logs: {BASE_PATH / 'logs'}")
 
     # Restore persisted Jupyter and TensorBoard processes
     restore_jupyter_processes()
@@ -106,7 +106,7 @@ async def lifespan(app: FastAPI):
     # Initialize and start the task scheduler
     init_scheduler(manager)
     start_scheduler()
-    print("⏰ Task scheduler started")
+    print("[INFO] Task scheduler started")
 
     yield
 
@@ -126,9 +126,9 @@ async def lifespan(app: FastAPI):
                 import os
                 import signal
                 os.killpg(os.getpgid(pid), signal.SIGTERM)
-                print(f"   Stopped Jupyter for project {project_id}")
+                print(f"[INFO] Stopped Jupyter for project {project_id}")
         except Exception as e:
-            print(f"   Warning: Could not stop Jupyter for project {project_id}: {e}")
+            print(f"[WARN] Could not stop Jupyter for project {project_id}: {e}")
         remove_jupyter_pid(project_id)
 
     # Gracefully terminate TensorBoard processes
@@ -139,12 +139,12 @@ async def lifespan(app: FastAPI):
                 import os
                 import signal
                 os.kill(pid, signal.SIGTERM)
-                print(f"   Stopped TensorBoard {key}")
+                print(f"[INFO] Stopped TensorBoard {key}")
         except Exception as e:
-            print(f"   Warning: Could not stop TensorBoard {key}: {e}")
+            print(f"[WARN] Could not stop TensorBoard {key}: {e}")
         remove_tensorboard_pid(key)
 
-    print("👋 MacRunner shutdown complete")
+    print("[INFO] MacRunner shutdown complete")
 
 
 # Create FastAPI app
@@ -1133,7 +1133,7 @@ def restore_jupyter_processes() -> None:
             if is_process_alive(pid):
                 # Process is still running, restore to memory
                 # Create a dummy process object to track it
-                print(f"🔄 Restored Jupyter process for project {project_id} (PID: {pid})")
+                print(f"[INFO] Restored Jupyter process for project {project_id} (PID: {pid})")
                 jupyter_processes[project_id] = {
                     "process": None,  # Can't restore subprocess.Popen object
                     "pid": pid,
@@ -1144,10 +1144,10 @@ def restore_jupyter_processes() -> None:
                 }
             else:
                 # Process is dead, clean up PID file
-                print(f"🧹 Cleaning up stale Jupyter PID file for project {project_id}")
+                print(f"[INFO] Cleaning up stale Jupyter PID file for project {project_id}")
                 pid_file.unlink(missing_ok=True)
         except Exception as e:
-            print(f"⚠️ Error restoring Jupyter process from {pid_file}: {e}")
+            print(f"[WARN] Error restoring Jupyter process from {pid_file}: {e}")
             try:
                 pid_file.unlink(missing_ok=True)
             except:
@@ -1176,7 +1176,7 @@ def restore_tensorboard_processes() -> None:
 
             if is_process_alive(pid):
                 # Process is still running, restore to memory
-                print(f"🔄 Restored TensorBoard process {key} (PID: {pid})")
+                print(f"[INFO] Restored TensorBoard process {key} (PID: {pid})")
                 tensorboard_processes[key] = {
                     "process": None,  # Can't restore subprocess.Popen object
                     "pid": pid,
@@ -1187,10 +1187,10 @@ def restore_tensorboard_processes() -> None:
                 }
             else:
                 # Process is dead, clean up PID file
-                print(f"🧹 Cleaning up stale TensorBoard PID file for {key}")
+                print(f"[INFO] Cleaning up stale TensorBoard PID file for {key}")
                 pid_file.unlink(missing_ok=True)
         except Exception as e:
-            print(f"⚠️ Error restoring TensorBoard process from {pid_file}: {e}")
+            print(f"[WARN] Error restoring TensorBoard process from {pid_file}: {e}")
             try:
                 pid_file.unlink(missing_ok=True)
             except:

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, GitBranch, Loader2, ChevronDown } from 'lucide-react';
+import { X, GitBranch, Loader2, ChevronDown, Code2 } from 'lucide-react';
 
 /**
  * Available Python versions for selection
@@ -134,7 +134,7 @@ export function NewProjectModal({ isOpen, onClose, onSubmit, isLoading }) {
           {/* Environment Configuration Section */}
           <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700 space-y-4">
             <h3 className="text-sm font-medium text-slate-300 flex items-center gap-2">
-              <span className="text-lg">🐍</span>
+              <Code2 className="w-4 h-4 text-terminal-green" />
               Python Environment
             </h3>
 

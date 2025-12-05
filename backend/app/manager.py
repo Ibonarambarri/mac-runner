@@ -65,7 +65,7 @@ def find_python_executable(version: Optional[str] = None) -> tuple[str, str]:
             return str(pyenv_python), version
 
         # Fall back to system Python with warning
-        print(f"⚠️ Warning: Python {version} not found, using system Python")
+        print(f"[WARN] Python {version} not found, using system Python")
 
     # Default to python3
     python_path = shutil.which("python3") or shutil.which("python")
@@ -616,7 +616,7 @@ class ProcessManager:
         try:
             # Find the appropriate Python executable
             python_exe, actual_version = find_python_executable(python_version)
-            print(f"🐍 Creating venv with {python_exe} (version: {actual_version})")
+            print(f"[INFO] Creating venv with {python_exe} (version: {actual_version})")
 
             process = await asyncio.create_subprocess_exec(
                 python_exe, "-m", "venv", str(venv_path),
@@ -631,7 +631,7 @@ class ProcessManager:
                 print(f"Failed to create venv: {stderr.decode()}")
                 return False
 
-            print(f"✅ Created venv environment at {venv_path}")
+            print(f"[INFO] Created venv environment at {venv_path}")
             return True
 
         except Exception as e:
@@ -662,13 +662,13 @@ class ProcessManager:
             # Find conda executable
             conda_exe = find_conda_executable()
             if not conda_exe:
-                print("❌ Conda/Mamba not found in PATH. Cannot create conda environment.")
-                print("   Please install Miniforge, Miniconda, or Anaconda.")
+                print("[ERROR] Conda/Mamba not found in PATH. Cannot create conda environment.")
+                print("        Please install Miniforge, Miniconda, or Anaconda.")
                 return False
 
             # Determine which tool we're using (mamba or conda)
             tool_name = "mamba" if "mamba" in conda_exe else "conda"
-            print(f"🐍 Creating conda environment with {tool_name}")
+            print(f"[INFO] Creating conda environment with {tool_name}")
 
             # Build command
             cmd = [conda_exe, "create", "-p", str(env_path), "-y"]
@@ -699,7 +699,7 @@ class ProcessManager:
                     print(f"   Python {python_version} not available in conda channels")
                 return False
 
-            print(f"✅ Created conda environment at {env_path}")
+            print(f"[INFO] Created conda environment at {env_path}")
             return True
 
         except Exception as e:
@@ -743,11 +743,11 @@ class ProcessManager:
             if python_check.exists():
                 return True
             else:
-                print(f"⚠️ Environment directory exists but Python not found, recreating...")
+                print(f"[WARN] Environment directory exists but Python not found, recreating...")
                 shutil.rmtree(env_path)
 
         # Environment doesn't exist, try to recreate it
-        print(f"⚠️ Environment not found at {env_path}, attempting to recreate...")
+        print(f"[WARN] Environment not found at {env_path}, attempting to recreate...")
 
         if env_type == EnvironmentType.CONDA:
             success = await self._create_conda_environment(
@@ -759,7 +759,7 @@ class ProcessManager:
             )
 
         if not success:
-            print(f"❌ Failed to recreate environment for project {project.id}")
+            print(f"[ERROR] Failed to recreate environment for project {project.id}")
 
         return success
 
@@ -836,7 +836,7 @@ class ProcessManager:
                 return f'"{conda_exe}" run -p "{env_path}" --no-capture-output'
             else:
                 # Fallback: try direct activation (may not work in all shells)
-                print("⚠️ Conda not found, attempting direct activation")
+                print("[WARN] Conda not found, attempting direct activation")
                 return f'source "{env_path}/bin/activate"'
         else:
             # venv activation
