@@ -12,6 +12,7 @@ build/
 
 # Workspaces (cloned repos)
 backend/workspaces/
+backend/system_sripts/
 
 # Logs
 backend/logs/
