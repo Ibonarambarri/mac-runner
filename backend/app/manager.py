@@ -2327,17 +2327,19 @@ SYSTEM_SCRIPTS_PATH = Path(__file__).parent.parent / "system_scripts"
 def list_system_scripts() -> List[dict]:
     """
     List all available system scripts (.sh and .py files).
+    Scripts are returned in the order specified in the config file.
 
     Returns:
         List of script info dictionaries with name, description, and type.
     """
     scripts = []
+    scripts_by_name = {}
 
     if not SYSTEM_SCRIPTS_PATH.exists():
         SYSTEM_SCRIPTS_PATH.mkdir(parents=True, exist_ok=True)
         return scripts
 
-    for script_file in sorted(SYSTEM_SCRIPTS_PATH.iterdir()):
+    for script_file in SYSTEM_SCRIPTS_PATH.iterdir():
         if script_file.suffix not in (".sh", ".py"):
             continue
         if script_file.name.startswith("."):
@@ -2365,13 +2367,27 @@ def list_system_scripts() -> List[dict]:
 
         script_type = "bash" if script_file.suffix == ".sh" else "python"
 
-        scripts.append({
+        scripts_by_name[script_file.name] = {
             "name": script_file.name,
             "display_name": script_file.stem.replace("_", " ").replace("-", " ").title(),
             "description": description or f"System {script_type} script",
             "type": script_type,
             "path": str(script_file)
-        })
+        }
+
+    # Get custom order from config
+    config = get_scripts_config()
+    ordered_names = config.get("order", [])
+
+    # Add scripts in custom order first
+    for name in ordered_names:
+        if name in scripts_by_name:
+            scripts.append(scripts_by_name[name])
+
+    # Add any remaining scripts not in the order (new scripts)
+    for name, script in scripts_by_name.items():
+        if name not in ordered_names:
+            scripts.append(script)
 
     return scripts
 
@@ -2449,6 +2465,264 @@ async def run_system_script(
         if log_callback:
             await log_callback(error_msg)
         return 1, error_msg
+
+
+# Path to scripts configuration file
+SCRIPTS_CONFIG_PATH = SYSTEM_SCRIPTS_PATH / ".scripts_config.json"
+
+
+def get_scripts_config() -> dict:
+    """
+    Get the scripts configuration (order, etc.).
+
+    Returns:
+        Dictionary with 'order' key containing list of script names.
+    """
+    if not SCRIPTS_CONFIG_PATH.exists():
+        return {"order": []}
+
+    try:
+        with open(SCRIPTS_CONFIG_PATH, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {"order": []}
+
+
+def save_scripts_config(config: dict) -> None:
+    """
+    Save scripts configuration to JSON file.
+
+    Args:
+        config: Configuration dictionary with 'order' key.
+    """
+    # Ensure directory exists
+    SYSTEM_SCRIPTS_PATH.mkdir(parents=True, exist_ok=True)
+
+    with open(SCRIPTS_CONFIG_PATH, "w") as f:
+        json.dump(config, f, indent=2)
+
+
+def get_script_content(script_name: str) -> str:
+    """
+    Get the content of a system script for editing.
+
+    Args:
+        script_name: Name of the script file.
+
+    Returns:
+        Script content as string.
+
+    Raises:
+        ValueError: If script not found or invalid.
+    """
+    script_path = SYSTEM_SCRIPTS_PATH / script_name
+
+    # Validate script exists
+    if not script_path.exists():
+        raise ValueError(f"Script not found: {script_name}")
+
+    if script_path.suffix not in (".sh", ".py"):
+        raise ValueError(f"Invalid script type: {script_name}")
+
+    # Path traversal protection
+    try:
+        script_path.resolve().relative_to(SYSTEM_SCRIPTS_PATH.resolve())
+    except ValueError:
+        raise ValueError("Invalid script path")
+
+    with open(script_path, "r") as f:
+        return f.read()
+
+
+def create_system_script(name: str, content: str, script_type: str) -> dict:
+    """
+    Create a new system script.
+
+    Args:
+        name: Script name (without extension).
+        content: Script content.
+        script_type: Either 'bash' or 'python'.
+
+    Returns:
+        Script info dictionary.
+
+    Raises:
+        ValueError: If invalid name or type, or script already exists.
+    """
+    # Validate script type
+    if script_type not in ("bash", "python"):
+        raise ValueError(f"Invalid script type: {script_type}")
+
+    # Determine extension
+    extension = ".sh" if script_type == "bash" else ".py"
+
+    # Sanitize name - only allow alphanumeric, underscore, hyphen
+    import re
+    if not re.match(r'^[a-zA-Z0-9_-]+$', name):
+        raise ValueError("Invalid script name. Only alphanumeric, underscore and hyphen allowed.")
+
+    filename = f"{name}{extension}"
+    script_path = SYSTEM_SCRIPTS_PATH / filename
+
+    # Path traversal protection
+    try:
+        script_path.resolve().relative_to(SYSTEM_SCRIPTS_PATH.resolve())
+    except ValueError:
+        raise ValueError("Invalid script path")
+
+    # Check if already exists
+    if script_path.exists():
+        raise ValueError(f"Script already exists: {filename}")
+
+    # Ensure directory exists
+    SYSTEM_SCRIPTS_PATH.mkdir(parents=True, exist_ok=True)
+
+    # Write script
+    with open(script_path, "w") as f:
+        f.write(content)
+
+    # Make executable
+    script_path.chmod(0o755)
+
+    # Add to order config
+    config = get_scripts_config()
+    if filename not in config["order"]:
+        config["order"].append(filename)
+    save_scripts_config(config)
+
+    # Extract description for return
+    description = ""
+    lines = content.split("\n")
+    for line in lines:
+        line = line.strip()
+        if line.startswith("#") and not line.startswith("#!"):
+            description = line.lstrip("#").strip()
+            break
+        elif line.startswith('"""') or line.startswith("'''"):
+            if len(lines) > 1:
+                description = lines[1].strip().strip('"""').strip("'''")
+            break
+        elif line and not line.startswith("#!"):
+            break
+
+    return {
+        "name": filename,
+        "display_name": name.replace("_", " ").replace("-", " ").title(),
+        "description": description or f"System {script_type} script",
+        "type": script_type,
+        "path": str(script_path)
+    }
+
+
+def update_system_script(script_name: str, content: str) -> dict:
+    """
+    Update an existing system script content.
+
+    Args:
+        script_name: Name of the script file.
+        content: New script content.
+
+    Returns:
+        Updated script info dictionary.
+
+    Raises:
+        ValueError: If script not found or invalid.
+    """
+    script_path = SYSTEM_SCRIPTS_PATH / script_name
+
+    # Validate script exists
+    if not script_path.exists():
+        raise ValueError(f"Script not found: {script_name}")
+
+    if script_path.suffix not in (".sh", ".py"):
+        raise ValueError(f"Invalid script type: {script_name}")
+
+    # Path traversal protection
+    try:
+        script_path.resolve().relative_to(SYSTEM_SCRIPTS_PATH.resolve())
+    except ValueError:
+        raise ValueError("Invalid script path")
+
+    # Write updated content
+    with open(script_path, "w") as f:
+        f.write(content)
+
+    script_type = "bash" if script_path.suffix == ".sh" else "python"
+
+    # Extract description for return
+    description = ""
+    lines = content.split("\n")
+    for line in lines:
+        line = line.strip()
+        if line.startswith("#") and not line.startswith("#!"):
+            description = line.lstrip("#").strip()
+            break
+        elif line.startswith('"""') or line.startswith("'''"):
+            if len(lines) > 1:
+                description = lines[1].strip().strip('"""').strip("'''")
+            break
+        elif line and not line.startswith("#!"):
+            break
+
+    return {
+        "name": script_name,
+        "display_name": script_path.stem.replace("_", " ").replace("-", " ").title(),
+        "description": description or f"System {script_type} script",
+        "type": script_type,
+        "path": str(script_path)
+    }
+
+
+def delete_system_script(script_name: str) -> bool:
+    """
+    Delete a system script.
+
+    Args:
+        script_name: Name of the script file.
+
+    Returns:
+        True if deleted successfully.
+
+    Raises:
+        ValueError: If script not found or invalid.
+    """
+    script_path = SYSTEM_SCRIPTS_PATH / script_name
+
+    # Validate script exists
+    if not script_path.exists():
+        raise ValueError(f"Script not found: {script_name}")
+
+    if script_path.suffix not in (".sh", ".py"):
+        raise ValueError(f"Invalid script type: {script_name}")
+
+    # Path traversal protection
+    try:
+        script_path.resolve().relative_to(SYSTEM_SCRIPTS_PATH.resolve())
+    except ValueError:
+        raise ValueError("Invalid script path")
+
+    # Delete file
+    script_path.unlink()
+
+    # Remove from order config
+    config = get_scripts_config()
+    if script_name in config["order"]:
+        config["order"].remove(script_name)
+        save_scripts_config(config)
+
+    return True
+
+
+def reorder_system_scripts(order: List[str]) -> None:
+    """
+    Update the order of system scripts.
+
+    Args:
+        order: List of script names in desired order.
+    """
+    config = get_scripts_config()
+    config["order"] = order
+    save_scripts_config(config)
 
 
 # Global process manager instance

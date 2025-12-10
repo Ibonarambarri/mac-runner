@@ -2570,7 +2570,15 @@ async def run_scheduled_task_now(
 # SYSTEM SCRIPTS ENDPOINTS
 # ============================================================================
 
-from .manager import list_system_scripts, run_system_script
+from .manager import (
+    list_system_scripts,
+    run_system_script,
+    get_script_content,
+    create_system_script,
+    update_system_script,
+    delete_system_script,
+    reorder_system_scripts
+)
 
 
 @app.get("/system-scripts")
@@ -2625,6 +2633,134 @@ async def execute_system_script(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error executing script: {str(e)}")
+
+
+@app.get("/system-scripts/{script_name}/content")
+async def get_script_content_endpoint(
+    script_name: str,
+    admin: User = Depends(require_admin)
+):
+    """
+    Get the content of a system script for editing.
+    Admin only.
+    """
+    try:
+        content = get_script_content(script_name)
+        return {"script_name": script_name, "content": content}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class CreateScriptRequest(BaseModel):
+    """Request body for creating a new script."""
+    name: str
+    content: str
+    script_type: str  # "bash" or "python"
+
+
+@app.post("/system-scripts")
+async def create_script_endpoint(
+    request: CreateScriptRequest,
+    session: Session = Depends(get_session),
+    admin: User = Depends(require_admin)
+):
+    """
+    Create a new system script.
+    Admin only.
+    """
+    try:
+        script = create_system_script(request.name, request.content, request.script_type)
+
+        log_activity(
+            session,
+            username=admin.username,
+            action="create_system_script",
+            target=script["name"],
+            details=f"type={request.script_type}"
+        )
+
+        return script
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class UpdateScriptRequest(BaseModel):
+    """Request body for updating a script."""
+    content: str
+
+
+@app.put("/system-scripts/{script_name}")
+async def update_script_endpoint(
+    script_name: str,
+    request: UpdateScriptRequest,
+    session: Session = Depends(get_session),
+    admin: User = Depends(require_admin)
+):
+    """
+    Update an existing system script.
+    Admin only.
+    """
+    try:
+        script = update_system_script(script_name, request.content)
+
+        log_activity(
+            session,
+            username=admin.username,
+            action="update_system_script",
+            target=script_name,
+            details=""
+        )
+
+        return script
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/system-scripts/{script_name}")
+async def delete_script_endpoint(
+    script_name: str,
+    session: Session = Depends(get_session),
+    admin: User = Depends(require_admin)
+):
+    """
+    Delete a system script.
+    Admin only.
+    """
+    try:
+        delete_system_script(script_name)
+
+        log_activity(
+            session,
+            username=admin.username,
+            action="delete_system_script",
+            target=script_name,
+            details=""
+        )
+
+        return {"success": True, "message": f"Script {script_name} deleted"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class ReorderScriptsRequest(BaseModel):
+    """Request body for reordering scripts."""
+    order: list[str]
+
+
+@app.put("/system-scripts/order")
+async def reorder_scripts_endpoint(
+    request: ReorderScriptsRequest,
+    admin: User = Depends(require_admin)
+):
+    """
+    Update the order of system scripts.
+    Admin only.
+    """
+    try:
+        reorder_system_scripts(request.order)
+        return {"success": True, "order": request.order}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================

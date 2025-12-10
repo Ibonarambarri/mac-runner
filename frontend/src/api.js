@@ -582,6 +582,52 @@ export async function runSystemScript(scriptName) {
   });
 }
 
+/**
+ * Get script content for editing
+ */
+export async function getScriptContent(scriptName) {
+  return apiFetch(`/system-scripts/${encodeURIComponent(scriptName)}/content`);
+}
+
+/**
+ * Create a new system script
+ */
+export async function createSystemScript(name, content, scriptType) {
+  return apiFetch('/system-scripts', {
+    method: 'POST',
+    body: JSON.stringify({ name, content, script_type: scriptType }),
+  });
+}
+
+/**
+ * Update an existing system script
+ */
+export async function updateSystemScript(scriptName, content) {
+  return apiFetch(`/system-scripts/${encodeURIComponent(scriptName)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
+  });
+}
+
+/**
+ * Delete a system script
+ */
+export async function deleteSystemScript(scriptName) {
+  return apiFetch(`/system-scripts/${encodeURIComponent(scriptName)}`, {
+    method: 'DELETE',
+  });
+}
+
+/**
+ * Update the order of system scripts
+ */
+export async function updateScriptsOrder(order) {
+  return apiFetch('/system-scripts/order', {
+    method: 'PUT',
+    body: JSON.stringify({ order }),
+  });
+}
+
 // ============================================================================
 // USER MANAGEMENT API (Admin only)
 // ============================================================================
