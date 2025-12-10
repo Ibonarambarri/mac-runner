@@ -7,6 +7,7 @@ CRITICAL: Uses PYTHONUNBUFFERED=1 to ensure real-time log streaming.
 
 import asyncio
 import fcntl
+import json
 import os
 import platform
 import pty
