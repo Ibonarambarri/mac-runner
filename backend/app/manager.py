@@ -2478,13 +2478,20 @@ def get_scripts_config() -> dict:
     Returns:
         Dictionary with 'order' key containing list of script names.
     """
+    print(f"[DEBUG] Config path: {SCRIPTS_CONFIG_PATH}")
+    print(f"[DEBUG] Config exists: {SCRIPTS_CONFIG_PATH.exists()}")
+
     if not SCRIPTS_CONFIG_PATH.exists():
+        print("[DEBUG] Config file doesn't exist, returning empty order")
         return {"order": []}
 
     try:
         with open(SCRIPTS_CONFIG_PATH, "r") as f:
-            return json.load(f)
-    except Exception:
+            config = json.load(f)
+            print(f"[DEBUG] Loaded config: {config}")
+            return config
+    except Exception as e:
+        print(f"[DEBUG] Error loading config: {e}")
         return {"order": []}
 
 
@@ -2495,11 +2502,16 @@ def save_scripts_config(config: dict) -> None:
     Args:
         config: Configuration dictionary with 'order' key.
     """
+    print(f"[DEBUG] Saving config: {config}")
+    print(f"[DEBUG] To path: {SCRIPTS_CONFIG_PATH}")
+
     # Ensure directory exists
     SYSTEM_SCRIPTS_PATH.mkdir(parents=True, exist_ok=True)
 
     with open(SCRIPTS_CONFIG_PATH, "w") as f:
         json.dump(config, f, indent=2)
+
+    print(f"[DEBUG] Config saved successfully")
 
 
 def get_script_content(script_name: str) -> str:

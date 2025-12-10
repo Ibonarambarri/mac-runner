@@ -8,6 +8,9 @@ venv/
 # Workspaces (cloned repos)
 workspaces/
 
+# System scripts (managed via UI)
+system_scripts/
+
 # Logs
 logs/
 

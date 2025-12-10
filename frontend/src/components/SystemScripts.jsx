@@ -343,18 +343,25 @@ export function SystemScripts() {
   const handleDragEnd = async (event) => {
     const { active, over } = event;
 
-    if (active.id !== over?.id) {
+    if (active.id !== over?.id && over) {
       const oldIndex = scripts.findIndex(s => s.name === active.id);
       const newIndex = scripts.findIndex(s => s.name === over.id);
 
+      if (oldIndex === -1 || newIndex === -1) return;
+
       const newScripts = arrayMove(scripts, oldIndex, newIndex);
+      const newOrder = newScripts.map(s => s.name);
+
+      // Optimistically update UI
       setScripts(newScripts);
 
       // Save new order to backend
       try {
-        await updateScriptsOrder(newScripts.map(s => s.name));
+        const result = await updateScriptsOrder(newOrder);
+        console.log('Order saved:', result);
       } catch (e) {
         console.error('Failed to save order:', e);
+        setError(`Failed to save order: ${e.message}`);
         // Revert on error
         fetchScripts();
       }

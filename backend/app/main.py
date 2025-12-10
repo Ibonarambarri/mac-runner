@@ -2653,9 +2653,12 @@ async def reorder_scripts_endpoint(
     to avoid route conflicts.
     """
     try:
+        print(f"[DEBUG] Reordering scripts: {request.order}")
         reorder_system_scripts(request.order)
+        print(f"[DEBUG] Order saved successfully")
         return {"success": True, "order": request.order}
     except Exception as e:
+        print(f"[DEBUG] Error saving order: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
