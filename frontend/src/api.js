@@ -611,3 +611,23 @@ export async function deleteUser(username) {
     method: 'DELETE',
   });
 }
+
+/**
+ * Update a user's role (Admin only)
+ */
+export async function updateUser(username, data) {
+  return apiFetch(`/admin/users/${encodeURIComponent(username)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+/**
+ * Change a user's password (Admin only)
+ */
+export async function adminChangePassword(username, newPassword) {
+  return apiFetch(`/admin/users/${encodeURIComponent(username)}/password`, {
+    method: 'PUT',
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+}

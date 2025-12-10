@@ -28,7 +28,7 @@ from .models import (
     CommandTemplate, CommandTemplateCreate, CommandTemplateRead, CommandTemplateUpdate,
     FileInfo,
     ScheduledTask, ScheduledTaskCreate, ScheduledTaskRead, ScheduledTaskUpdate,
-    User, UserCreate, UserRead, UserRole,
+    User, UserCreate, UserRead, UserRole, UserUpdate, AdminPasswordChangeRequest,
     AuditLog, AuditLogRead
 )
 from .manager import init_process_manager, get_process_manager, safe_kill_process_group
@@ -2714,6 +2714,69 @@ def delete_user(
     )
 
     return {"status": "deleted", "username": username}
+
+
+@app.put("/admin/users/{username}", response_model=UserRead)
+def update_user(
+    username: str,
+    user_update: UserUpdate,
+    session: Session = Depends(get_session),
+    admin: User = Depends(require_admin)
+):
+    """
+    Update a user's role. Admin only.
+    """
+    user = session.get(User, username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user_update.role is not None:
+        user.role = user_update.role
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+        # Log the activity
+        log_activity(
+            session,
+            username=admin.username,
+            action="update_user",
+            target=username,
+            details=f"role={user_update.role.value}"
+        )
+
+    return user
+
+
+@app.put("/admin/users/{username}/password")
+def admin_change_password(
+    username: str,
+    request: AdminPasswordChangeRequest,
+    session: Session = Depends(get_session),
+    admin: User = Depends(require_admin)
+):
+    """
+    Change any user's password. Admin only.
+    Does not require current password.
+    """
+    user = session.get(User, username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Update password
+    user.hashed_password = hash_password(request.new_password)
+    session.add(user)
+    session.commit()
+
+    # Log the activity
+    log_activity(
+        session,
+        username=admin.username,
+        action="admin_change_password",
+        target=username
+    )
+
+    return {"status": "password_changed", "username": username}
 
 
 @app.post("/users/me/change-password")

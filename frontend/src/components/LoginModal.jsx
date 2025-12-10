@@ -128,12 +128,6 @@ export function LoginModal() {
             </button>
           </form>
 
-          {/* Footer */}
-          <div className="px-6 py-4 bg-slate-800/30 border-t border-slate-700">
-            <p className="text-xs text-slate-500 text-center">
-              Default credentials: admin / admin
-            </p>
-          </div>
         </div>
       </div>
     </div>

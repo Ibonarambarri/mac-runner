@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { User, LogOut, Shield, ChevronDown, UserPlus } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { User, LogOut, Shield, ChevronDown, UserPlus, Users } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 /**
@@ -11,6 +12,7 @@ import { useAuth } from '../contexts/AuthContext';
  * @param {function} onCreateUser - Callback to open Create User modal (admin only)
  */
 export function UserMenu({ onCreateUser }) {
+  const navigate = useNavigate();
   const { user, logout, isAuthenticated } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef(null);
@@ -75,17 +77,17 @@ export function UserMenu({ onCreateUser }) {
 
           {/* Menu Items */}
           <div className="py-1">
-            {/* Create User - Admin only */}
-            {isAdmin && onCreateUser && (
+            {/* Manage Users - Admin only */}
+            {isAdmin && (
               <button
                 onClick={() => {
                   setIsOpen(false);
-                  onCreateUser();
+                  navigate('/admin/users');
                 }}
                 className="w-full flex items-center gap-3 px-4 py-2.5 text-slate-300 hover:text-slate-100 hover:bg-slate-700/50 transition-colors"
               >
-                <UserPlus className="w-4 h-4" />
-                <span className="text-sm">Create User</span>
+                <Users className="w-4 h-4" />
+                <span className="text-sm">Manage Users</span>
               </button>
             )}
 

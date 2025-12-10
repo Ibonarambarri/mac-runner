@@ -263,6 +263,16 @@ class UserRead(SQLModel):
     created_at: datetime
 
 
+class UserUpdate(SQLModel):
+    """Schema for updating a user (admin only)."""
+    role: Optional[UserRole] = None
+
+
+class AdminPasswordChangeRequest(SQLModel):
+    """Schema for admin to change any user's password."""
+    new_password: str
+
+
 # ============================================================================
 # AUDIT LOG MODELS
 # ============================================================================
