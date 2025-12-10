@@ -2635,6 +2635,30 @@ async def execute_system_script(
         raise HTTPException(status_code=500, detail=f"Error executing script: {str(e)}")
 
 
+class ReorderScriptsRequest(BaseModel):
+    """Request body for reordering scripts."""
+    order: list[str]
+
+
+@app.put("/system-scripts/order")
+async def reorder_scripts_endpoint(
+    request: ReorderScriptsRequest,
+    admin: User = Depends(require_admin)
+):
+    """
+    Update the order of system scripts.
+    Admin only.
+
+    NOTE: This endpoint must be defined BEFORE /system-scripts/{script_name}
+    to avoid route conflicts.
+    """
+    try:
+        reorder_system_scripts(request.order)
+        return {"success": True, "order": request.order}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/system-scripts/{script_name}/content")
 async def get_script_content_endpoint(
     script_name: str,
@@ -2740,27 +2764,6 @@ async def delete_script_endpoint(
         return {"success": True, "message": f"Script {script_name} deleted"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-
-class ReorderScriptsRequest(BaseModel):
-    """Request body for reordering scripts."""
-    order: list[str]
-
-
-@app.put("/system-scripts/order")
-async def reorder_scripts_endpoint(
-    request: ReorderScriptsRequest,
-    admin: User = Depends(require_admin)
-):
-    """
-    Update the order of system scripts.
-    Admin only.
-    """
-    try:
-        reorder_system_scripts(request.order)
-        return {"success": True, "order": request.order}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Terminal, Plus, RefreshCw, Cpu, TerminalSquare, Wrench } from 'lucide-react';
+import { Terminal, Plus, RefreshCw, Cpu, TerminalSquare, Wrench, ChevronDown, ChevronUp } from 'lucide-react';
 
 import { ProjectCard } from '../components/ProjectCard';
 import { NewProjectModal } from '../components/NewProjectModal';
@@ -31,6 +31,9 @@ function HomePage() {
   // Create User Modal state
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
   const [isCreatingUser, setIsCreatingUser] = useState(false);
+
+  // System Scripts collapsed state
+  const [scriptsCollapsed, setScriptsCollapsed] = useState(false);
 
   // Fetch projects
   const fetchProjects = useCallback(async () => {
@@ -210,14 +213,30 @@ function HomePage() {
         {/* System Scripts Section - Admin only */}
         {user?.role === 'admin' && (
           <div className="mt-8 pt-6 border-t border-slate-800">
-            <div className="flex items-center gap-2 mb-4">
-              <Wrench className="w-5 h-5 text-terminal-green" />
-              <h2 className="text-base sm:text-lg font-semibold text-slate-300">System Scripts</h2>
-            </div>
-            <p className="text-xs text-slate-500 mb-4">
-              Quick maintenance scripts for system-level tasks
-            </p>
-            <SystemScripts />
+            <button
+              onClick={() => setScriptsCollapsed(!scriptsCollapsed)}
+              className="w-full flex items-center justify-between group"
+            >
+              <div className="flex items-center gap-2">
+                <Wrench className="w-5 h-5 text-terminal-green" />
+                <h2 className="text-base sm:text-lg font-semibold text-slate-300">System Scripts</h2>
+              </div>
+              <div className="p-1 text-slate-400 group-hover:text-slate-200 transition-colors">
+                {scriptsCollapsed ? (
+                  <ChevronDown className="w-5 h-5" />
+                ) : (
+                  <ChevronUp className="w-5 h-5" />
+                )}
+              </div>
+            </button>
+            {!scriptsCollapsed && (
+              <>
+                <p className="text-xs text-slate-500 mb-4 mt-2">
+                  Quick maintenance scripts for system-level tasks
+                </p>
+                <SystemScripts />
+              </>
+            )}
           </div>
         )}
       </main>
